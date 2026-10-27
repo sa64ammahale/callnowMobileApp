@@ -79,6 +79,12 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
       'color': Colors.blueGrey,
     },
     {
+      'id': 'NOT_CONNECTED_DND',
+      'label': 'DND Number',
+      'icon': Icons.do_not_disturb_on_rounded,
+      'color': Colors.deepOrange,
+    },
+    {
       'id': 'NOT_CONNECTED_WRONG_NUMBER',
       'label': 'Wrong Number',
       'icon': Icons.error_outline_rounded,
@@ -291,7 +297,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
     final mobile = (lead['mobile'] ?? '').toString();
     if (mobile.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No mobile number available for this lead.')),
+        const SnackBar(content: Text('No mobile number available for this contact.')),
       );
       return;
     }
@@ -429,14 +435,15 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
       return;
     }
 
-    // Anti-Fraud Rule 3: Connected call (>20s) cannot be marked as Switched Off or Cancelled
+    // Anti-Fraud Rule 3: Connected call (>20s) cannot be marked as Switched Off, DND, or Cancelled
     if (verifiedDur > 20 &&
         (_selectedDisposition == 'NOT_CONNECTED_SWITCHED_OFF' ||
-            _selectedDisposition == 'NOT_CONNECTED_CANCELLED')) {
+            _selectedDisposition == 'NOT_CONNECTED_CANCELLED' ||
+            _selectedDisposition == 'NOT_CONNECTED_DND')) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Validation Error: Call was connected for ${verifiedDur}s. Cannot report as Switched Off or Cancelled.',
+            'Validation Error: Call was connected for ${verifiedDur}s. Cannot report as Switched Off, DND, or Cancelled.',
             style: TextStyle(fontWeight: FontWeight.w600),
           ),
           backgroundColor: Colors.red.shade800,
@@ -528,7 +535,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'Reload Leads Batch',
+            tooltip: 'Reload Contacts',
             onPressed: _isLoading || _isSubmitting ? null : () => _loadInitialBatch(force: true),
           ),
         ],
@@ -567,7 +574,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
         children: [
           // Call verification status bar
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             margin: const EdgeInsets.only(bottom: 8),
             decoration: BoxDecoration(
               color: isDialed
@@ -607,44 +614,16 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
                       ),
                     ),
                   ),
-                  InkWell(
-                    onTap: () => _verifyCallWithAndroidLog(showToast: true),
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 4),
-                      child: Icon(Icons.refresh, size: 14, color: Colors.green),
-                    ),
-                  ),
                 ] else ...[
                   Icon(Icons.lock_clock, size: 14, color: Colors.amber.shade900),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'Dial customer or tap Fetch Status',
+                      'Dial customer to unlock submit',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                         color: Colors.amber.shade900,
-                      ),
-                    ),
-                  ),
-                  InkWell(
-                    onTap: () => _verifyCallWithAndroidLog(showToast: true),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.amber.shade800,
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.sync, size: 11, color: Colors.white),
-                          SizedBox(width: 3),
-                          Text(
-                            'Fetch',
-                            style: TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold),
-                          ),
-                        ],
                       ),
                     ),
                   ),
@@ -729,7 +708,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
               const Icon(Icons.error_outline, size: 64, color: Colors.redAccent),
               const SizedBox(height: 16),
               Text(
-                'Failed to load leads',
+                'Failed to load contacts',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
@@ -768,12 +747,12 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
               ),
               const SizedBox(height: 20),
               const Text(
-                'All Leads Completed!',
+                'All Calls Completed!',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               const Text(
-                'You have completed all leads in the current batch. Tap below to fetch the next batch from the server.',
+                'You have completed all contacts in the current batch. Tap below to fetch the next batch from the server.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey),
               ),
@@ -781,7 +760,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
               FilledButton.icon(
                 onPressed: _loadInitialBatch,
                 icon: const Icon(Icons.download_rounded),
-                label: const Text('Fetch Next Leads Batch'),
+                label: const Text('Fetch Next Contacts Batch'),
               ),
             ],
           ),
@@ -791,10 +770,13 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
 
     final source = (lead['source'] ?? 'TEMPORARY').toString().toUpperCase();
     final isMainDb = source == 'MAIN';
-    final name = (lead['name'] ?? 'Unnamed Lead').toString();
+    final name = (lead['name'] ?? 'Unnamed Contact').toString();
     final mobile = (lead['mobile'] ?? '').toString();
-    final company = (lead['company'] ?? 'Individual').toString();
-    final pkg = (lead['package'] ?? 'General Enquiry').toString();
+    final company = (lead['company'] ?? '').toString().trim();
+    final pkg = (lead['package'] ?? '').toString().trim();
+    final otherInfo = (lead['other_info'] ?? '').toString().trim();
+    final callCount = int.tryParse(lead['call_count']?.toString() ?? '0') ?? 0;
+    final lastStatus = (lead['last_status'] ?? '').toString().trim();
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -815,7 +797,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  'Lead ${_currentIndex + 1} of ${_leads.length}',
+                  'Contact ${_currentIndex + 1} of ${_leads.length}',
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
               ),
@@ -841,7 +823,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      isMainDb ? 'Priority Client' : 'New Lead',
+                      isMainDb ? 'Priority Client' : 'New Contact',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -855,7 +837,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
           ),
           const SizedBox(height: 12),
 
-          // Primary Lead Card
+          // Primary Contact Card
           Card(
             elevation: 3,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -891,38 +873,54 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              company,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                const Icon(Icons.local_offer_outlined, size: 14, color: Colors.grey),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    pkg,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                      color: colorScheme.primary,
+                            if (company.isNotEmpty && company != 'Individual') ...[
+                              const SizedBox(height: 3),
+                              Row(
+                                children: [
+                                  Icon(Icons.business_rounded, size: 14, color: Colors.grey.shade600),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      company,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey.shade700,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                ),
-                              ],
-                            ),
+                                ],
+                              ),
+                            ],
+                            if (pkg.isNotEmpty && pkg != 'General Enquiry') ...[
+                              const SizedBox(height: 3),
+                              Row(
+                                children: [
+                                  Icon(Icons.sell_outlined, size: 14, color: colorScheme.primary),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      pkg,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: colorScheme.primary,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ],
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
+
+                  // Phone Number Container (Number ID removed)
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -931,30 +929,89 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.phone, size: 18, color: Colors.grey),
-                            const SizedBox(width: 8),
-                            Text(
-                              mobile,
-                              style: const TextStyle(
-                                fontSize: 17,
+                        Icon(Icons.phone_in_talk_rounded, size: 18, color: colorScheme.primary),
+                        const SizedBox(width: 10),
+                        Text(
+                          mobile,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const Spacer(),
+                        if (callCount > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              'Dialed $callCount time${callCount > 1 ? 's' : ''}',
+                              style: TextStyle(
+                                fontSize: 11,
                                 fontWeight: FontWeight.bold,
-                                letterSpacing: 0.5,
+                                color: Colors.blue.shade800,
                               ),
                             ),
-                          ],
-                        ),
-                        Text(
-                          'ID #${lead['id']}',
-                          style: const TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
+                          )
+                        else if (lastStatus.isNotEmpty && lastStatus != 'Not Called')
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              lastStatus,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 16),
+
+                  // Other Information Banner (Notes, loan requirement, or extra details)
+                  if (otherInfo.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.notes_rounded, size: 16, color: colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              otherInfo,
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                height: 1.35,
+                                color: colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
 
                   // Call & WhatsApp Action Buttons
                   Row(
@@ -995,7 +1052,8 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
                     ],
                   ),
                   const SizedBox(height: 10),
-                  // Manual Fetch Status from Call History Button
+
+                  // The SINGLE Fetch Status Button in the Calling Desk
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
@@ -1027,7 +1085,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
                           fontWeight: FontWeight.bold,
                           fontSize: 13,
                           color: _verifiedCallLog?.isDialed == true
-                              ? Colors.green.shade800
+                               ? Colors.green.shade800
                               : Colors.indigo.shade800,
                         ),
                       ),
@@ -1051,7 +1109,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
           ),
           const SizedBox(height: 14),
 
-          // Detected Call Timing Tier Banner
+          // Detected Call Timing Tier Banner (sync button removed)
           Card(
             color: _getTimingTierBgColor(),
             shape: RoundedRectangleBorder(
@@ -1088,16 +1146,6 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
                         ),
                       ],
                     ),
-                  ),
-                  // Sync / Verify with Android Call Log
-                  IconButton(
-                    icon: Icon(
-                      _isCheckingCallLog ? Icons.hourglass_top : Icons.sync,
-                      size: 20,
-                      color: _getTimingTierTextColor(),
-                    ),
-                    tooltip: 'Verify from Call Log',
-                    onPressed: () => _verifyCallWithAndroidLog(showToast: true),
                   ),
                 ],
               ),

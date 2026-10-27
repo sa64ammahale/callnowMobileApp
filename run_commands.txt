@@ -33,4 +33,4 @@ flutter build apk
 
 
 
-flutter run -d 8HZLOBXWPNPJUC89
+flutter run -d 4B211VDAQ0009G

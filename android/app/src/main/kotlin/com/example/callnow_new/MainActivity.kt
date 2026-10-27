@@ -59,10 +59,10 @@ class MainActivity: FlutterActivity() {
             CallLog.Calls.DURATION
         )
 
-        // Query outgoing calls ordered by DATE DESC limit 50
+        // Query outgoing calls ordered by DATE DESC
         val selection = "${CallLog.Calls.TYPE} = ?"
         val selectionArgs = arrayOf(CallLog.Calls.OUTGOING_TYPE.toString())
-        val sortOrder = "${CallLog.Calls.DATE} DESC LIMIT 50"
+        val sortOrder = "${CallLog.Calls.DATE} DESC"
 
         var cursor: Cursor? = null
         try {
@@ -80,6 +80,7 @@ class MainActivity: FlutterActivity() {
                 val dateIdx = cursor.getColumnIndex(CallLog.Calls.DATE)
                 val durIdx = cursor.getColumnIndex(CallLog.Calls.DURATION)
 
+                var checkedCount = 0
                 do {
                     val num = if (numIdx != -1) cursor.getString(numIdx) ?: "" else ""
                     val callDate = if (dateIdx != -1) cursor.getLong(dateIdx) else 0L
@@ -90,7 +91,6 @@ class MainActivity: FlutterActivity() {
                     val last10Num = if (cleanNum.length >= 10) cleanNum.takeLast(10) else cleanNum
 
                     val isMatch = (last10Target.isNotEmpty() && (last10Num == last10Target || cleanNum.endsWith(last10Target) || last10Target.endsWith(cleanNum)))
-                    // Allow generous 2-hour window before afterTimestamp for clock skew or calls dialed just before
                     val timestampValid = (afterTimestamp <= 0L) || (callDate >= (afterTimestamp - (2 * 3600 * 1000L)))
 
                     if (isMatch && timestampValid) {
@@ -104,6 +104,8 @@ class MainActivity: FlutterActivity() {
                             "type" to callType
                         )
                     }
+                    checkedCount++
+                    if (checkedCount >= 50) break
                 } while (cursor.moveToNext())
             }
         } catch (e: Exception) {
