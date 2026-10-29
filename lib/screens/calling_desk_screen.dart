@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
+import 'package:callnow_new/services/followup_service.dart';
 
 class CallingDeskScreen extends StatefulWidget {
   const CallingDeskScreen({super.key});
@@ -402,6 +403,34 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     }
   }
 
+  void _setFollowupPreset(Duration duration) {
+    setState(() {
+      _followupDateTime = DateTime.now().add(duration);
+    });
+  }
+
+  void _setFollowupPresetAbsolute({required int hour, required int minute, bool tomorrow = false}) {
+    final now = DateTime.now();
+    final base = tomorrow ? now.add(const Duration(days: 1)) : now;
+    setState(() {
+      _followupDateTime = DateTime(base.year, base.month, base.day, hour, minute);
+    });
+  }
+
+  Widget _buildPresetChip(String label, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: ActionChip(
+        label: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        visualDensity: VisualDensity.compact,
+        backgroundColor: Colors.white,
+        side: BorderSide(color: Colors.grey.shade300),
+        onPressed: onTap,
+      ),
+    );
+  }
+
   void _skipLead() {
     if (_currentIndex + 1 < _leads.length) {
       setState(() {
@@ -521,8 +550,23 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         : _timingClassification;
 
     String? followupIso;
-    if (_selectedDisposition == 'CONNECTED_FOLLOWUP' && _followupDateTime != null) {
+    if (_followupDateTime != null) {
       followupIso = _followupDateTime!.toIso8601String().replaceAll('T', ' ').substring(0, 19);
+      try {
+        await FollowupService.instance.addFollowup(
+          customerName: lead['name']?.toString() ?? 'Customer',
+          phoneNumber: lead['mobile']?.toString() ?? '',
+          company: lead['company']?.toString(),
+          scheduledTime: _followupDateTime!,
+          notes: _notesController.text.trim().isNotEmpty
+              ? _notesController.text.trim()
+              : 'Follow-up requested from Calling Desk ($statusLabel)',
+          leadId: int.tryParse(leadId.toString()),
+          source: source,
+        );
+      } catch (e) {
+        debugPrint('Error saving local followup: $e');
+      }
     }
 
     setState(() => _isSubmitting = true);
@@ -539,9 +583,12 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
       );
 
       if (mounted) {
+        final followupNotice = _followupDateTime != null
+            ? ' (⏰ Callback set for ${_followupDateTime!.day}/${_followupDateTime!.month} ${_followupDateTime!.hour.toString().padLeft(2, '0')}:${_followupDateTime!.minute.toString().padLeft(2, '0')})'
+            : '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Call saved: $statusLabel for ${lead['name']}'),
+            content: Text('Call saved: $statusLabel for ${lead['name']}$followupNotice'),
             duration: const Duration(seconds: 2),
             behavior: SnackBarBehavior.floating,
           ),
@@ -1329,29 +1376,88 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
           ),
           const SizedBox(height: 10),
 
-          // Follow-up Date Time picker if disposition is FOLLOWUP
-          if (_selectedDisposition == 'CONNECTED_FOLLOWUP') ...[
-            Card(
-              color: Colors.orange.withValues(alpha: 0.08),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.orange.shade300),
-              ),
-              child: ListTile(
-                dense: true,
-                leading: const Icon(Icons.event_available, color: Colors.orange),
-                title: Text(
-                  _followupDateTime != null
-                      ? 'Follow-up: ${_followupDateTime!.day}/${_followupDateTime!.month}/${_followupDateTime!.year} at ${_followupDateTime!.hour.toString().padLeft(2, '0')}:${_followupDateTime!.minute.toString().padLeft(2, '0')}'
-                      : 'Schedule Follow-up Date & Time',
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                ),
-                trailing: const Icon(Icons.edit_calendar, color: Colors.orange, size: 20),
-                onTap: _pickFollowupDateTime,
+          // Follow-up & Callback Reminder Section
+          Card(
+            color: _followupDateTime != null
+                ? Colors.amber.shade50
+                : const Color(0xFFF8FAFC),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: _followupDateTime != null
+                    ? Colors.amber.shade400
+                    : const Color(0xFFE2E8F0),
               ),
             ),
-            const SizedBox(height: 10),
-          ],
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.alarm_on_rounded,
+                        color: _followupDateTime != null
+                            ? Colors.amber.shade900
+                            : const Color(0xFF64748B),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _followupDateTime != null
+                              ? 'Callback: ${_followupDateTime!.day}/${_followupDateTime!.month} at ${_followupDateTime!.hour.toString().padLeft(2, '0')}:${_followupDateTime!.minute.toString().padLeft(2, '0')}'
+                              : 'Schedule Callback / Follow-Up Reminder',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: _followupDateTime != null
+                                ? Colors.amber.shade900
+                                : const Color(0xFF334155),
+                          ),
+                        ),
+                      ),
+                      if (_followupDateTime != null)
+                        InkWell(
+                          onTap: () => setState(() => _followupDateTime = null),
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade100,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.close, size: 14, color: Colors.red),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildPresetChip('+15 Mins', () => _setFollowupPreset(const Duration(minutes: 15))),
+                        _buildPresetChip('+30 Mins', () => _setFollowupPreset(const Duration(minutes: 30))),
+                        _buildPresetChip('+1 Hour', () => _setFollowupPreset(const Duration(hours: 1))),
+                        _buildPresetChip('+2 Hours', () => _setFollowupPreset(const Duration(hours: 2))),
+                        _buildPresetChip('Tomorrow 10 AM', () => _setFollowupPresetAbsolute(hour: 10, minute: 0, tomorrow: true)),
+                        _buildPresetChip('Tomorrow 3 PM', () => _setFollowupPresetAbsolute(hour: 15, minute: 0, tomorrow: true)),
+                        ActionChip(
+                          avatar: const Icon(Icons.edit_calendar, size: 14),
+                          label: const Text('Custom Picker', style: TextStyle(fontSize: 11)),
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          onPressed: _pickFollowupDateTime,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
 
           // Quick Remarks Chips
           const Text('Quick Remarks', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey)),

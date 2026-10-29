@@ -8,7 +8,9 @@ import 'package:callnow_new/screens/settings_screen.dart';
 import 'package:callnow_new/screens/calling_desk_screen.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/screens/leads_screen.dart';
+import 'package:callnow_new/screens/followup_screen.dart';
 import 'package:callnow_new/services/notification_service.dart';
+import 'package:callnow_new/services/followup_service.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -16,6 +18,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ConfigService.init();
   await NotificationService.init();
+  await FollowupService.init();
   runApp(const MyApp());
 }
 
@@ -149,6 +152,7 @@ class MyApp extends StatelessWidget {
         '/calling_desk': (context) => const CallingDeskScreen(),
         '/reports': (context) => const CallReportsScreen(),
         '/settings': (context) => const SettingsScreen(),
+        '/followups': (context) => const FollowUpScreen(),
       },
       debugShowCheckedModeBanner: false,
     );

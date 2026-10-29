@@ -1,10 +1,17 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:callnow_new/model/followup_model.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/config_service.dart';
+import 'package:callnow_new/services/followup_service.dart';
+import 'package:callnow_new/services/notification_service.dart';
+import 'package:callnow_new/widgets/callback_alert_dialog.dart';
 import 'package:callnow_new/screens/calling_desk_screen.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/screens/leads_screen.dart';
+import 'package:callnow_new/screens/followup_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -15,11 +22,68 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
+  Timer? _callbackWatchdogTimer;
+  StreamSubscription<String?>? _notificationSub;
 
   @override
   void initState() {
     super.initState();
     _initCallTracker();
+    _initCallbackWatchdog();
+  }
+
+  void _initCallbackWatchdog() {
+    // Check every 25 seconds for callbacks due now
+    _callbackWatchdogTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+      _checkDueCallbacks();
+    });
+
+    // Listen to push notification clicks
+    _notificationSub = NotificationService.onNotificationTap.listen((payload) {
+      if (payload != null && mounted) {
+        _handleNotificationTap(payload);
+      }
+    });
+
+    // Initial check after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkDueCallbacks();
+    });
+  }
+
+  void _checkDueCallbacks() {
+    if (!mounted) return;
+    final dueList = FollowupService.instance.getDueNowUnprompted();
+    if (dueList.isNotEmpty) {
+      final first = dueList.first;
+      CallbackAlertDialog.show(context, first);
+    }
+  }
+
+  void _handleNotificationTap(String payload) {
+    try {
+      final data = jsonDecode(payload);
+      final id = data['id']?.toString();
+      if (id != null) {
+        final followup = FollowupService.instance.followups.firstWhere(
+          (f) => f.id == id,
+          orElse: () => FollowupModel.fromJson(data),
+        );
+        CallbackAlertDialog.show(context, followup);
+      }
+    } catch (_) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const FollowUpScreen()),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _callbackWatchdogTimer?.cancel();
+    _notificationSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _initCallTracker() async {
@@ -128,6 +192,27 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          ListenableBuilder(
+            listenable: FollowupService.instance,
+            builder: (context, _) {
+              final pendingCount = FollowupService.instance.getPending().length;
+              return IconButton(
+                icon: Badge(
+                  isLabelVisible: pendingCount > 0,
+                  label: Text('$pendingCount'),
+                  backgroundColor: Colors.amber.shade900,
+                  child: const Icon(Icons.alarm_on_outlined),
+                ),
+                tooltip: 'Client Follow-ups ($pendingCount)',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const FollowUpScreen()),
+                  );
+                },
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Logout',
@@ -481,19 +566,25 @@ class _DashboardPageState extends State<DashboardPage> {
                       }
                     },
                   ),
-                  _buildStatCard(
-                    context,
-                    title: 'Follow-ups Pending',
-                    value: followupsCount.toString(),
-                    subtitle: 'Scheduled callbacks',
-                    icon: Icons.event_repeat,
-                    color: Colors.amber.shade900,
-                    onTap: () {
-                      if (widget.onOpenReportsFiltered != null) {
-                        widget.onOpenReportsFiltered!(tabIndex: 1, status: 'Follow-up', period: 'today');
-                      } else {
-                        widget.onOpenReports();
-                      }
+                  ListenableBuilder(
+                    listenable: FollowupService.instance,
+                    builder: (context, _) {
+                      final localPending = FollowupService.instance.getPending().length;
+                      final displayCount = localPending > 0 ? localPending : followupsCount;
+                      return _buildStatCard(
+                        context,
+                        title: 'Follow-ups Pending',
+                        value: displayCount.toString(),
+                        subtitle: 'Scheduled callbacks',
+                        icon: Icons.event_repeat,
+                        color: Colors.amber.shade900,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const FollowUpScreen()),
+                          );
+                        },
+                      );
                     },
                   ),
                 ],
@@ -550,6 +641,23 @@ class _DashboardPageState extends State<DashboardPage> {
                       trailing: const Icon(Icons.chevron_right, size: 20),
                       contentPadding: EdgeInsets.zero,
                       onTap: widget.onOpenReports,
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Colors.amber.withValues(alpha: 0.1),
+                        child: const Icon(Icons.alarm_on, color: Colors.amber, size: 20),
+                      ),
+                      title: const Text('Client Follow-Up Pipeline', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      subtitle: const Text('Manage scheduled callbacks, snoozed and overdue calls', style: TextStyle(fontSize: 12)),
+                      trailing: const Icon(Icons.chevron_right, size: 20),
+                      contentPadding: EdgeInsets.zero,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const FollowUpScreen()),
+                        );
+                      },
                     ),
                     const Divider(height: 1),
                     ListTile(

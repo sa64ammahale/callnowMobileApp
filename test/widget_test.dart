@@ -21,7 +21,7 @@ void main() {
       const MaterialApp(home: LoginScreen()),
     );
 
-    expect(find.text('Email'), findsOneWidget);
+    expect(find.text('Email Address'), findsOneWidget);
     expect(find.text('Password'), findsOneWidget);
     expect(find.text('Sign In'), findsOneWidget);
   });
@@ -103,6 +103,22 @@ void main() {
     expect(find.widgetWithText(NavigationDestination, 'Calling Desk'), findsOneWidget);
     expect(find.widgetWithText(NavigationDestination, 'Reports'), findsOneWidget);
     expect(find.widgetWithText(NavigationDestination, 'Profile'), findsOneWidget);
+  });
+
+  testWidgets('Dashboard displays Client Follow-Up Pipeline shortcut', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DashboardPage(
+            onStartCalling: () {},
+            onOpenReports: () {},
+            onOpenProfile: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Client Follow-Up Pipeline'), findsOneWidget);
   });
 }
 

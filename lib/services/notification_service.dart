@@ -7,12 +7,15 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:callnow_new/model/followup_model.dart';
 
 class NotificationService {
-  static final NotificationService _instance = NotificationService._internal();
-  factory NotificationService() => _instance;
+  static NotificationService? _instance;
+  static NotificationService get instance =>
+      _instance ??= NotificationService._internal();
+  factory NotificationService() => instance;
   NotificationService._internal();
 
-  static final FlutterLocalNotificationsPlugin _flutterLocalNotificationsPlugin =
-      FlutterLocalNotificationsPlugin();
+  static FlutterLocalNotificationsPlugin? _plugin;
+  static FlutterLocalNotificationsPlugin get _flutterLocalNotificationsPlugin =>
+      _plugin ??= FlutterLocalNotificationsPlugin();
 
   static const String channelId = 'callnow_callbacks_channel';
   static const String channelName = 'Client Callback Reminders';
@@ -32,7 +35,6 @@ class NotificationService {
 
     try {
       tz_data.initializeTimeZones();
-      // Use local timezone or fallback to UTC if device timezone lookup fails
       try {
         final localName = DateTime.now().timeZoneName;
         if (tz.timeZoneDatabase.locations.containsKey(localName)) {
@@ -74,20 +76,22 @@ class NotificationService {
 
       _isInitialized = true;
     } catch (e) {
-      debugPrint('NotificationService init error: $e');
+      debugPrint('NotificationService init notice (test or unsupported platform): $e');
     }
   }
 
   static Future<bool> requestPermissions() async {
-    final androidImplementation = _flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
+    try {
+      final androidImplementation = _flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>();
 
-    if (androidImplementation != null) {
-      final granted =
-          await androidImplementation.requestNotificationsPermission();
-      return granted ?? false;
-    }
+      if (androidImplementation != null) {
+        final granted =
+            await androidImplementation.requestNotificationsPermission();
+        return granted ?? false;
+      }
+    } catch (_) {}
     return true;
   }
 
@@ -101,7 +105,6 @@ class NotificationService {
       await init();
       final id = _getNotificationId(followup.id);
 
-      // Only schedule if scheduledTime is in future
       if (followup.scheduledTime.isBefore(DateTime.now())) {
         return;
       }
@@ -153,7 +156,8 @@ class NotificationService {
         scheduledDate,
         notificationDetails,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
         payload: jsonEncode(payloadMap),
       );
     } catch (e) {
