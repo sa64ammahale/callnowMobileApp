@@ -87,9 +87,13 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
         limit: 50,
       );
 
-      final rawCalls = historyResponse['calls'] as List? ?? [];
-      final List<Map<String, dynamic>> parsedCalls =
-          rawCalls.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      final rawCalls = historyResponse['data'] ?? historyResponse['calls'];
+      final List<Map<String, dynamic>> parsedCalls = (rawCalls is List)
+          ? rawCalls
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : [];
 
       if (mounted) {
         setState(() {
@@ -135,16 +139,6 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Call Reports', style: TextStyle(fontWeight: FontWeight.bold)),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh Reports',
-            onPressed: _isLoading ? null : _loadReportData,
-          ),
-        ],
-      ),
       body: RefreshIndicator(
         onRefresh: _loadReportData,
         child: SingleChildScrollView(
@@ -310,12 +304,23 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
     );
   }
 
+  String _formatDuration(dynamic rawSeconds) {
+    final totalSeconds = rawSeconds is int ? rawSeconds : (int.tryParse(rawSeconds?.toString() ?? '') ?? 0);
+    if (totalSeconds <= 0) return '0s';
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (minutes == 0) return '${seconds}s';
+    if (seconds == 0) return '${minutes}m';
+    return '${minutes}m ${seconds}s';
+  }
+
   Widget _buildKpiMetricsGrid(ColorScheme colorScheme) {
     final summary = _summaryData ?? {};
     final totalCalls = summary['total_calls'] ?? 0;
-    final totalDuration = summary['total_duration_formatted'] ?? '0s';
-    final connectionRate = summary['connection_rate'] ?? 0.0;
-    final avgDuration = summary['avg_duration_seconds'] ?? 0;
+    final rawDuration = summary['total_duration_seconds'] ?? summary['total_duration'] ?? 0;
+    final totalDuration = summary['total_duration_formatted'] ?? _formatDuration(rawDuration);
+    final connectionRate = summary['connection_rate_percent'] ?? summary['connection_rate'] ?? 0;
+    final avgDuration = summary['avg_duration_seconds'] ?? summary['avg_duration'] ?? 0;
 
     return GridView.count(
       crossAxisCount: 2,
@@ -432,10 +437,11 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
 
   Widget _buildTimingTiersCard(ColorScheme colorScheme) {
     final summary = _summaryData ?? {};
-    final tiers = summary['timing_tiers'] as Map? ?? {};
-    final notConnected = int.tryParse(tiers['not_connected']?.toString() ?? '0') ?? 0;
-    final shortCalls = int.tryParse(tiers['short_call']?.toString() ?? '0') ?? 0;
-    final conversations = int.tryParse(tiers['conversation']?.toString() ?? '0') ?? 0;
+    final rawTiers = summary['timing_tiers'];
+    final Map tiers = rawTiers is Map ? rawTiers : {};
+    final notConnected = int.tryParse((tiers['not_connected'] ?? tiers['notConnected'])?.toString() ?? '0') ?? 0;
+    final shortCalls = int.tryParse((tiers['connected_short'] ?? tiers['short_call'])?.toString() ?? '0') ?? 0;
+    final conversations = int.tryParse((tiers['connected_conversation'] ?? tiers['conversation'])?.toString() ?? '0') ?? 0;
     final total = notConnected + shortCalls + conversations;
 
     final double convoPct = total > 0 ? (conversations / total) * 100 : 0.0;
@@ -619,13 +625,13 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
   }
 
   Widget _buildCallLogItem(BuildContext context, Map<String, dynamic> call) {
-    final name = (call['customer_name'] ?? 'Unnamed Client').toString();
-    final mobile = (call['phone_number'] ?? call['mobile'] ?? '').toString();
-    final company = (call['company'] ?? '').toString();
-    final status = (call['status'] ?? 'Completed').toString();
-    final duration = int.tryParse(call['duration_seconds']?.toString() ?? '0') ?? 0;
+    final name = (call['customer_name'] ?? call['client_name'] ?? call['name'] ?? 'Unnamed Client').toString();
+    final mobile = (call['customer_mobile'] ?? call['phone_number'] ?? call['mobile'] ?? '').toString();
+    final company = (call['customer_company'] ?? call['company'] ?? '').toString();
+    final status = (call['call_status'] ?? call['status'] ?? 'Completed').toString();
+    final duration = int.tryParse((call['call_duration'] ?? call['duration_seconds'])?.toString() ?? '0') ?? 0;
     final timingTier = (call['timing_classification'] ?? 'NOT_CONNECTED').toString();
-    final createdAt = (call['created_at'] ?? '').toString();
+    final createdAt = (call['call_time'] ?? call['created_at'] ?? '').toString();
     final notes = (call['notes'] ?? '').toString();
     final followup = (call['next_followup'] ?? '').toString();
     final source = (call['source'] ?? 'TEMPORARY').toString().toUpperCase();
@@ -849,12 +855,12 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
   }
 
   void _showCallDetailsSheet(BuildContext context, Map<String, dynamic> call) {
-    final name = (call['customer_name'] ?? 'Unnamed Client').toString();
-    final mobile = (call['phone_number'] ?? call['mobile'] ?? '').toString();
-    final company = (call['company'] ?? 'Individual').toString();
-    final pkg = (call['package'] ?? 'General Enquiry').toString();
-    final status = (call['status'] ?? 'Completed').toString();
-    final duration = int.tryParse(call['duration_seconds']?.toString() ?? '0') ?? 0;
+    final name = (call['customer_name'] ?? call['client_name'] ?? call['name'] ?? 'Unnamed Client').toString();
+    final mobile = (call['customer_mobile'] ?? call['phone_number'] ?? call['mobile'] ?? '').toString();
+    final company = (call['customer_company'] ?? call['company'] ?? 'Individual').toString();
+    final pkg = (call['customer_package'] ?? call['package'] ?? 'General Enquiry').toString();
+    final status = (call['call_status'] ?? call['status'] ?? 'Completed').toString();
+    final duration = int.tryParse((call['call_duration'] ?? call['duration_seconds'])?.toString() ?? '0') ?? 0;
     final notes = (call['notes'] ?? 'No notes recorded').toString();
     final followup = (call['next_followup'] ?? '').toString();
     final source = (call['source'] ?? 'TEMPORARY').toString().toUpperCase();

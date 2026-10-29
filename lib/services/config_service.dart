@@ -20,9 +20,12 @@ class ConfigService {
     _cachedToken = prefs.getString(_tokenKey);
     final userDataStr = prefs.getString(_userDataKey);
     if (userDataStr != null) {
-      _cachedUserData = Map<String, dynamic>.from(
-        Map.castFrom(json.decode(userDataStr)),
-      );
+      try {
+        final decoded = json.decode(userDataStr);
+        if (decoded is Map) {
+          _cachedUserData = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
     }
     _initialized = true;
   }

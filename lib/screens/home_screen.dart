@@ -4,7 +4,7 @@ import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/screens/calling_desk_screen.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
-import 'package:callnow_new/screens/settings_screen.dart';
+import 'package:callnow_new/screens/leads_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -45,27 +45,50 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  String get _currentTitle {
+    switch (_selectedIndex) {
+      case 0:
+        return 'CallNow - Dashboard';
+      case 1:
+        return 'CallNow - Leads Queue';
+      case 2:
+        return 'CallNow - Calling Desk';
+      case 3:
+        return 'CallNow - Call Reports';
+      case 4:
+        return 'CallNow - Profile';
+      default:
+        return 'CallNow';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<Widget> pages = [
       DashboardPage(
-        onStartCalling: () => _onItemTapped(1),
-        onOpenReports: () => _onItemTapped(2),
-        onOpenProfile: () => _onItemTapped(3),
+        onStartCalling: () => _onItemTapped(2),
+        onOpenLeads: () => _onItemTapped(1),
+        onOpenReports: () => _onItemTapped(3),
+        onOpenProfile: () => _onItemTapped(4),
+      ),
+      LeadsScreen(
+        onOpenCallingDesk: () => _onItemTapped(2),
       ),
       const CallingDeskScreen(),
       const CallReportsScreen(),
       const ProfilePage(),
-      const SettingsScreen(),
     ];
 
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.phone_in_talk, size: 22),
-            SizedBox(width: 8),
-            Text('CallNow', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Icon(Icons.phone_in_talk, size: 22),
+            const SizedBox(width: 8),
+            Text(
+              _currentTitle,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            ),
           ],
         ),
         actions: [
@@ -95,6 +118,11 @@ class _HomeScreenState extends State<HomeScreen> {
             label: 'Dashboard',
           ),
           NavigationDestination(
+            icon: Icon(Icons.contact_phone_outlined),
+            selectedIcon: Icon(Icons.contact_phone),
+            label: 'Leads',
+          ),
+          NavigationDestination(
             icon: Icon(Icons.phone_in_talk_outlined),
             selectedIcon: Icon(Icons.phone_in_talk),
             label: 'Calling Desk',
@@ -109,11 +137,6 @@ class _HomeScreenState extends State<HomeScreen> {
             selectedIcon: Icon(Icons.person),
             label: 'Profile',
           ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
         ],
       ),
     );
@@ -125,12 +148,14 @@ class _HomeScreenState extends State<HomeScreen> {
 // -----------------------------------------------------------------------------
 class DashboardPage extends StatefulWidget {
   final VoidCallback onStartCalling;
+  final VoidCallback? onOpenLeads;
   final VoidCallback onOpenReports;
   final VoidCallback onOpenProfile;
 
   const DashboardPage({
     super.key,
     required this.onStartCalling,
+    this.onOpenLeads,
     required this.onOpenReports,
     required this.onOpenProfile,
   });
@@ -197,7 +222,10 @@ class _DashboardPageState extends State<DashboardPage> {
     final talkSeconds = _stats?['today_talk_time'] ?? _summary?['total_duration_seconds'] ?? 0;
     final talkTimeFormatted = _formatDuration(talkSeconds);
 
-    final statusBreakdown = _summary?['status_breakdown'] as Map<String, dynamic>? ?? {};
+    final rawStatusBreakdown = _summary?['status_breakdown'];
+    final Map<String, dynamic> statusBreakdown = rawStatusBreakdown is Map
+        ? Map<String, dynamic>.from(rawStatusBreakdown)
+        : {};
     int followupsCount = 0;
     statusBreakdown.forEach((k, v) {
       final keyLower = k.toLowerCase();
@@ -248,11 +276,6 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     ],
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed: _loadLiveStats,
-                  tooltip: 'Refresh Stats',
                 ),
               ],
             ),
@@ -423,6 +446,20 @@ class _DashboardPageState extends State<DashboardPage> {
                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                     ),
                     const SizedBox(height: 12),
+                    if (widget.onOpenLeads != null) ...[
+                      ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: Colors.indigo.withValues(alpha: 0.1),
+                          child: const Icon(Icons.contact_phone, color: Colors.indigo, size: 20),
+                        ),
+                        title: const Text('Browse Assigned Leads', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                        subtitle: const Text('View and search upcoming contacts in queue', style: TextStyle(fontSize: 12)),
+                        trailing: const Icon(Icons.chevron_right, size: 20),
+                        contentPadding: EdgeInsets.zero,
+                        onTap: widget.onOpenLeads,
+                      ),
+                      const Divider(height: 1),
+                    ],
                     ListTile(
                       leading: CircleAvatar(
                         backgroundColor: Colors.blue.withValues(alpha: 0.1),
@@ -526,8 +563,24 @@ class _DashboardPageState extends State<DashboardPage> {
 // -----------------------------------------------------------------------------
 // PROFILE TAB (Logged-In User Credentials & Device Status)
 // -----------------------------------------------------------------------------
-class ProfilePage extends StatelessWidget {
+class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  bool _vibrateOnEnd = true;
+  bool _keepScreenOn = true;
+  bool _quickWhatsAppPrompt = true;
+
+  Future<void> _refreshProfile() async {
+    try {
+      await ApiService.getProfile();
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -536,96 +589,178 @@ class ProfilePage extends StatelessWidget {
     final role = ConfigService.userRole;
     final userId = ConfigService.userId;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        children: [
-          const SizedBox(height: 20),
-          CircleAvatar(
-            radius: 40,
-            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-            child: Text(
-              displayName.toString().isNotEmpty ? displayName.toString()[0].toUpperCase() : 'T',
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.onPrimaryContainer,
+    return RefreshIndicator(
+      onRefresh: _refreshProfile,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            CircleAvatar(
+              radius: 38,
+              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+              child: Text(
+                displayName.toString().isNotEmpty ? displayName.toString()[0].toUpperCase() : 'T',
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            displayName.toString(),
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            email.toString(),
-            style: const TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.blue.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
+            const SizedBox(height: 12),
+            Text(
+              displayName.toString(),
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
-            child: Text(
-              'Role: $role • ID: $userId',
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                color: Colors.blue,
-              ),
+            const SizedBox(height: 2),
+            Text(
+              email.toString(),
+              style: const TextStyle(color: Colors.grey),
             ),
-          ),
-          const SizedBox(height: 24),
-          Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            child: Column(
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                ListTile(
-                  leading: const Icon(Icons.phone_android),
-                  title: const Text('Call Permissions Status'),
-                  subtitle: const Text('Ensure call logging permissions are active'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    final granted = await CallTrackingService.requestPermissions();
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            granted
-                                ? 'All call tracking permissions are active!'
-                                : 'Permissions need to be granted in system settings.',
-                          ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Role: $role • ID: $userId',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.circle, color: Colors.green, size: 8),
+                      SizedBox(width: 4),
+                      Text(
+                        'Online',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
                         ),
-                      );
-                    }
-                  },
-                ),
-                const Divider(height: 1),
-                const ListTile(
-                  leading: Icon(Icons.info_outline),
-                  title: Text('App Version'),
-                  subtitle: Text('CallNow 5.0 (Telecaller Desk Edition)'),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.logout, color: Colors.red),
-                  title: const Text('Sign Out', style: TextStyle(color: Colors.red)),
-                  subtitle: const Text('Log out of this telecalling session'),
-                  onTap: () async {
-                    await ApiService.logout();
-                    if (context.mounted) {
-                      Navigator.pushReplacementNamed(context, '/login');
-                    }
-                  },
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 20),
+
+            // Calling Preferences
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Calling Preferences',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade700),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Card(
+              elevation: 1.5,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              child: Column(
+                children: [
+                  SwitchListTile(
+                    title: const Text('Vibrate on Call End', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text('Haptic feedback when phone call disconnects', style: TextStyle(fontSize: 12)),
+                    value: _vibrateOnEnd,
+                    onChanged: (val) => setState(() => _vibrateOnEnd = val),
+                  ),
+                  const Divider(height: 1),
+                  SwitchListTile(
+                    title: const Text('Keep Screen Awake', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text('Prevent display sleep during calling desk session', style: TextStyle(fontSize: 12)),
+                    value: _keepScreenOn,
+                    onChanged: (val) => setState(() => _keepScreenOn = val),
+                  ),
+                  const Divider(height: 1),
+                  SwitchListTile(
+                    title: const Text('Quick WhatsApp Intro', style: TextStyle(fontSize: 14)),
+                    subtitle: const Text('Pre-fill greeting when launching WhatsApp chat', style: TextStyle(fontSize: 12)),
+                    value: _quickWhatsAppPrompt,
+                    onChanged: (val) => setState(() => _quickWhatsAppPrompt = val),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Device & System Settings
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'System & Permissions',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade700),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Card(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.phone_android),
+                    title: const Text('Call Tracking Permissions'),
+                    subtitle: const Text('Verify READ_PHONE_STATE & READ_CALL_LOG'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () async {
+                      final granted = await CallTrackingService.requestPermissions();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              granted
+                                  ? 'All call tracking permissions are active!'
+                                  : 'Permissions need to be granted in system settings.',
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                  const Divider(height: 1),
+                  const ListTile(
+                    leading: Icon(Icons.info_outline),
+                    title: Text('App Version'),
+                    subtitle: Text('CallNow 5.0 (Telecaller Desk Edition)'),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.logout, color: Colors.red),
+                    title: const Text('Sign Out', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                    subtitle: const Text('Log out of this telecalling session'),
+                    onTap: () async {
+                      await ApiService.logout();
+                      if (context.mounted) {
+                        Navigator.pushReplacementNamed(context, '/login');
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
+        ),
       ),
     );
   }

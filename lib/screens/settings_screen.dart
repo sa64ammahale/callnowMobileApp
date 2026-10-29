@@ -22,12 +22,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final userId = ConfigService.userId;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings', style: TextStyle(fontWeight: FontWeight.bold)),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
+      body: RefreshIndicator(
+        onRefresh: () async {
+          setState(() {});
+        },
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Agent Card
@@ -213,6 +215,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 30),
           ],
         ),
+      ),
       ),
     );
   }

@@ -148,6 +148,12 @@ class ApiService {
     await ConfigService.clearAuthData();
   }
 
+  static Map<String, dynamic> _toMap(dynamic data) {
+    if (data is Map<String, dynamic>) return data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return <String, dynamic>{};
+  }
+
   // --- TELECALLER ---
   static Future<Map<String, dynamic>> getDashboardStats() async {
     final response = await http.get(
@@ -157,7 +163,7 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['success'] == true) return data['data'];
+      if (data['success'] == true) return _toMap(data['data']);
       throw Exception(data['message'] ?? 'Failed to load dashboard');
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();
@@ -177,8 +183,14 @@ class ApiService {
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['success'] == true && data['data'] != null) {
-        final list = data['data']['leads'] as List? ?? [];
-        return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        final raw = data['data'];
+        final dynamic listData = raw is Map ? raw['leads'] : raw;
+        if (listData is List) {
+          return listData
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
       }
       return [];
     } else if (response.statusCode == 401) {
@@ -198,7 +210,7 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['success'] == true) return data['data'];
+      if (data['success'] == true) return _toMap(data['data']);
       throw Exception(data['message'] ?? 'No pending calls');
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();
@@ -224,7 +236,7 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['success'] == true) return data['data'] as Map<String, dynamic>;
+      if (data['success'] == true) return _toMap(data['data']);
       throw Exception(data['message'] ?? 'Failed to load report summary');
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();
@@ -263,7 +275,7 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['success'] == true) return data['data'];
+      if (data['success'] == true) return _toMap(data['data']);
       throw Exception(data['message'] ?? 'Failed to load call history');
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();
@@ -283,7 +295,7 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['success'] == true) return data['data'];
+      if (data['success'] == true) return _toMap(data['data']);
       throw Exception(data['message'] ?? 'Failed to load call record history');
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();
@@ -324,7 +336,7 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['success'] == true) return data['data'];
+      if (data['success'] == true) return _toMap(data['data']);
       throw Exception(data['message'] ?? 'Failed to submit call result');
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();
@@ -361,7 +373,7 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['success'] == true) return data['data'];
+      if (data['success'] == true) return _toMap(data['data']);
       throw Exception(data['message'] ?? 'Failed to submit call');
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();
@@ -380,7 +392,7 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['success'] == true) return data['data'];
+      if (data['success'] == true) return _toMap(data['data']);
       throw Exception(data['message'] ?? 'Failed to load settings');
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();

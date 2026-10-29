@@ -7,6 +7,7 @@ import 'package:callnow_new/screens/settings_screen.dart';
 
 import 'package:callnow_new/screens/calling_desk_screen.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
+import 'package:callnow_new/screens/leads_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,6 +33,7 @@ class MyApp extends StatelessWidget {
         '/splash': (context) => const SplashScreen(),
         '/login': (context) => const LoginScreen(),
         '/home': (context) => const HomeScreen(),
+        '/leads': (context) => const LeadsScreen(),
         '/calling_desk': (context) => const CallingDeskScreen(),
         '/reports': (context) => const CallReportsScreen(),
         '/settings': (context) => const SettingsScreen(),

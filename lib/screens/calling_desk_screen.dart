@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
@@ -9,13 +10,19 @@ class CallingDeskScreen extends StatefulWidget {
   State<CallingDeskScreen> createState() => _CallingDeskScreenState();
 }
 
-class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindingObserver {
+class _CallingDeskScreenState extends State<CallingDeskScreen>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   final List<Map<String, dynamic>> _leads = [];
   int _currentIndex = 0;
   bool _isLoading = true;
   bool _isFetchingMore = false;
   bool _isSubmitting = false;
   String? _errorMessage;
+
+  // Inactivity blinking for footer warning
+  Timer? _inactivityTimer;
+  late final AnimationController _blinkController;
+  late final Animation<double> _blinkAnimation;
 
   // Verified call log state from Android OS
   VerifiedCallLog? _verifiedCallLog;
@@ -28,9 +35,9 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
   String _timingClassification = 'NOT_CONNECTED';
   DateTime? _followupDateTime;
   bool _hasCallOccurred = false;
-  bool? _overrideShowConnected;
+  bool _allowUnconnectedOverrideForShortCalls = false;
 
-  bool get _isCallConnected => _overrideShowConnected ?? (_durationSeconds > 0);
+  bool get _isCallConnected => _durationSeconds > 0;
 
   final List<Map<String, dynamic>> _connectedOptions = [
     {
@@ -56,6 +63,12 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
       'label': 'Not Interested',
       'icon': Icons.thumb_down_alt_rounded,
       'color': Colors.grey,
+    },
+    {
+      'id': 'CONNECTED_DND',
+      'label': 'DND Requested',
+      'icon': Icons.do_not_disturb_on_rounded,
+      'color': Colors.deepOrange,
     },
     {
       'id': 'VOICEMAIL',
@@ -104,6 +117,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
       ];
 
   final List<String> _quickRemarks = [
+    'Customer requested DND / Do not call',
     'Called, asked to callback later',
     'Shared brochure on WhatsApp',
     'Needs loan urgently (₹5L+)',
@@ -115,16 +129,47 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _blinkController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 650),
+    );
+    _blinkAnimation = Tween<double>(begin: 1.0, end: 0.25).animate(
+      CurvedAnimation(parent: _blinkController, curve: Curves.easeInOut),
+    );
+    _startInactivityTimer();
     _loadInitialBatch();
     CallTrackingService.activeCallSession.addListener(_onCallSessionDetected);
   }
 
   @override
   void dispose() {
+    _inactivityTimer?.cancel();
+    _blinkController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     CallTrackingService.activeCallSession.removeListener(_onCallSessionDetected);
     _notesController.dispose();
     super.dispose();
+  }
+
+  void _startInactivityTimer() {
+    _inactivityTimer?.cancel();
+    if (_blinkController.isAnimating) {
+      _blinkController.stop();
+      _blinkController.value = 0.0;
+    }
+    _inactivityTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted && (_verifiedCallLog == null || !_verifiedCallLog!.isDialed)) {
+        _blinkController.repeat(reverse: true);
+      }
+    });
+  }
+
+  void _stopInactivityBlink() {
+    _inactivityTimer?.cancel();
+    if (_blinkController.isAnimating) {
+      _blinkController.stop();
+      _blinkController.value = 0.0;
+    }
   }
 
   @override
@@ -170,22 +215,23 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
           if (verified.isDialed) {
             _hasCallOccurred = true;
             _durationSeconds = verified.durationSeconds;
+            _stopInactivityBlink();
 
             if (verified.durationSeconds == 0) {
               _timingClassification = 'NOT_CONNECTED';
               _selectedDisposition = 'NOT_CONNECTED_BUSY';
-              _overrideShowConnected = false;
+              _allowUnconnectedOverrideForShortCalls = false;
             } else if (verified.isVoicemailLikely) {
               // 1s - 18s: Automated Voicemail / IVR pickup
               _timingClassification = 'VOICEMAIL';
               _selectedDisposition = 'VOICEMAIL';
-              _overrideShowConnected = true;
+              _allowUnconnectedOverrideForShortCalls = false;
             } else {
               _timingClassification = verified.durationSeconds > 20
                   ? 'CONNECTED_CONVERSATION'
                   : 'CONNECTED_SHORT';
               _selectedDisposition = 'CONNECTED_INTERESTED';
-              _overrideShowConnected = true;
+              _allowUnconnectedOverrideForShortCalls = false;
             }
           }
         });
@@ -285,10 +331,11 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
     _timingClassification = 'NOT_CONNECTED';
     _followupDateTime = null;
     _hasCallOccurred = false;
-    _overrideShowConnected = null;
+    _allowUnconnectedOverrideForShortCalls = false;
     _selectedDisposition = 'NOT_CONNECTED_BUSY';
     _verifiedCallLog = null;
     _isCheckingCallLog = false;
+    _startInactivityTimer();
   }
 
   Future<void> _callCurrentLead() async {
@@ -435,15 +482,14 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
       return;
     }
 
-    // Anti-Fraud Rule 3: Connected call (>20s) cannot be marked as Switched Off, DND, or Cancelled
+    // Anti-Fraud Rule 3: Connected call (>20s) cannot be marked as Switched Off or Cancelled
     if (verifiedDur > 20 &&
         (_selectedDisposition == 'NOT_CONNECTED_SWITCHED_OFF' ||
-            _selectedDisposition == 'NOT_CONNECTED_CANCELLED' ||
-            _selectedDisposition == 'NOT_CONNECTED_DND')) {
+            _selectedDisposition == 'NOT_CONNECTED_CANCELLED')) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Validation Error: Call was connected for ${verifiedDur}s. Cannot report as Switched Off, DND, or Cancelled.',
+            'Validation Error: Call was connected for ${verifiedDur}s. Cannot report as Switched Off or Cancelled.',
             style: TextStyle(fontWeight: FontWeight.w600),
           ),
           backgroundColor: Colors.red.shade800,
@@ -530,16 +576,6 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Calling Desk', style: TextStyle(fontWeight: FontWeight.bold)),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Reload Contacts',
-            onPressed: _isLoading || _isSubmitting ? null : () => _loadInitialBatch(force: true),
-          ),
-        ],
-      ),
       body: _buildBody(colorScheme),
       bottomNavigationBar: _buildBottomActionBar(colorScheme),
     );
@@ -615,15 +651,32 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
                     ),
                   ),
                 ] else ...[
-                  Icon(Icons.lock_clock, size: 14, color: Colors.amber.shade900),
-                  const SizedBox(width: 6),
                   Expanded(
-                    child: Text(
-                      'Dial customer to unlock submit',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.amber.shade900,
+                    child: AnimatedBuilder(
+                      animation: _blinkAnimation,
+                      builder: (context, child) {
+                        return Opacity(
+                          opacity: _blinkController.isAnimating
+                              ? _blinkAnimation.value
+                              : 1.0,
+                          child: child,
+                        );
+                      },
+                      child: Row(
+                        children: [
+                          Icon(Icons.lock_clock, size: 14, color: Colors.amber.shade900),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Dial customer to unlock submit',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.amber.shade900,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -768,8 +821,6 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
       );
     }
 
-    final source = (lead['source'] ?? 'TEMPORARY').toString().toUpperCase();
-    final isMainDb = source == 'MAIN';
     final name = (lead['name'] ?? 'Unnamed Contact').toString();
     final mobile = (lead['mobile'] ?? '').toString();
     final company = (lead['company'] ?? '').toString().trim();
@@ -780,65 +831,22 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => FocusScope.of(context).unfocus(),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-        child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Queue progress pill & source indicator
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      onTap: () {
+        FocusScope.of(context).unfocus();
+        if (_verifiedCallLog == null || !_verifiedCallLog!.isDialed) {
+          _startInactivityTimer();
+        }
+      },
+      child: RefreshIndicator(
+        onRefresh: () => _loadInitialBatch(force: true),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  'Contact ${_currentIndex + 1} of ${_leads.length}',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: isMainDb
-                      ? Colors.blue.withValues(alpha: 0.15)
-                      : Colors.orange.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isMainDb ? Colors.blue.shade400 : Colors.orange.shade400,
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      isMainDb ? Icons.verified : Icons.inventory_2_outlined,
-                      size: 14,
-                      color: isMainDb ? Colors.blue : Colors.orange.shade800,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      isMainDb ? 'Priority Client' : 'New Contact',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: isMainDb ? Colors.blue.shade900 : Colors.orange.shade900,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          // Primary Contact Card
-          Card(
+              // Primary Contact Card
+              Card(
             elevation: 3,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             child: Padding(
@@ -1051,55 +1059,97 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 14),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
 
-                  // The SINGLE Fetch Status Button in the Calling Desk
+          // Unified Call Verification & Timing Card (Properly colored based on tier)
+          Card(
+            elevation: 2,
+            color: _getTimingTierBgColor(),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: _getTimingTierBorderColor(), width: 1.2),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: _getTimingTierIconBgColor(),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(_getTimingTierIcon(), color: _getTimingTierTextColor(), size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _getTimingTierTitle(),
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: _getTimingTierTextColor(),
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _verifiedCallLog?.isDialed == true
+                                  ? 'Android Call Log: ${_verifiedCallLog!.durationFormatted} talk time'
+                                  : 'Call not dialed yet (0s)',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _getTimingTierTextColor().withValues(alpha: 0.8),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Integrated Fetch Status from Call History Button
                   SizedBox(
                     width: double.infinity,
-                    child: OutlinedButton.icon(
+                    child: FilledButton.icon(
                       onPressed: _isCheckingCallLog
                           ? null
                           : () => _verifyCallWithAndroidLog(showToast: true),
                       icon: _isCheckingCallLog
                           ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                              width: 15,
+                              height: 15,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                             )
                           : Icon(
                               _verifiedCallLog?.isDialed == true
                                   ? Icons.check_circle_rounded
                                   : Icons.sync_rounded,
-                              color: _verifiedCallLog?.isDialed == true
-                                  ? Colors.green
-                                  : Colors.indigo,
-                              size: 18,
+                              size: 17,
+                              color: Colors.white,
                             ),
                       label: Text(
                         _isCheckingCallLog
                             ? 'Checking Call History...'
                             : (_verifiedCallLog?.isDialed == true
-                                ? 'Status Fetched (${_verifiedCallLog!.durationFormatted}) • Tap to Refresh'
+                                ? 'Status Verified (${_verifiedCallLog!.durationFormatted}) • Tap to Refresh'
                                 : 'Fetch Status from Call History'),
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                          color: _verifiedCallLog?.isDialed == true
-                               ? Colors.green.shade800
-                              : Colors.indigo.shade800,
-                        ),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
                       ),
-                      style: OutlinedButton.styleFrom(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _getTimingTierButtonBgColor(),
                         padding: const EdgeInsets.symmetric(vertical: 11),
-                        backgroundColor: _verifiedCallLog?.isDialed == true
-                            ? Colors.green.withValues(alpha: 0.08)
-                            : Colors.indigo.withValues(alpha: 0.06),
-                        side: BorderSide(
-                          color: _verifiedCallLog?.isDialed == true
-                              ? Colors.green.shade400
-                              : Colors.indigo.shade300,
-                        ),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
                     ),
                   ),
@@ -1109,89 +1159,78 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
           ),
           const SizedBox(height: 14),
 
-          // Detected Call Timing Tier Banner (sync button removed)
-          Card(
-            color: _getTimingTierBgColor(),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: _getTimingTierBorderColor(), width: 1),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(14.0),
-              child: Row(
-                children: [
-                  Icon(_getTimingTierIcon(), color: _getTimingTierTextColor(), size: 28),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _getTimingTierTitle(),
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: _getTimingTierTextColor(),
-                            fontSize: 14,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _verifiedCallLog?.isDialed == true
-                              ? 'Android Call Log: ${_verifiedCallLog!.durationFormatted} talk time'
-                              : 'Call not dialed yet (0s)',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: _getTimingTierTextColor().withValues(alpha: 0.8),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 14),
-
-          // Conditional Disposition Selection Header
+          // Conditional Disposition Selection Header (Strictly locked to Not Connected when 0s duration)
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(
-                    _isCallConnected ? Icons.phone_in_talk_rounded : Icons.phone_missed_rounded,
-                    size: 18,
-                    color: _isCallConnected ? Colors.green : Colors.amber.shade900,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _isCallConnected ? 'Connected Outcomes' : 'Not Connected Outcomes',
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              TextButton.icon(
-                style: TextButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                ),
-                onPressed: () {
-                  setState(() {
-                    _overrideShowConnected = !_isCallConnected;
-                    if (_isCallConnected) {
-                      _selectedDisposition = 'CONNECTED_INTERESTED';
-                    } else {
-                      _selectedDisposition = 'NOT_CONNECTED_BUSY';
-                    }
-                  });
-                },
-                icon: const Icon(Icons.swap_horiz, size: 16),
-                label: Text(
-                  _isCallConnected ? 'Show Unconnected' : 'Show Connected',
-                  style: const TextStyle(fontSize: 12),
+              Expanded(
+                child: Row(
+                  children: [
+                    Icon(
+                      (_isCallConnected && !_allowUnconnectedOverrideForShortCalls)
+                          ? Icons.phone_in_talk_rounded
+                          : Icons.phone_missed_rounded,
+                      size: 18,
+                      color: (_isCallConnected && !_allowUnconnectedOverrideForShortCalls)
+                          ? Colors.green
+                          : Colors.amber.shade900,
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        (_isCallConnected && !_allowUnconnectedOverrideForShortCalls)
+                            ? 'Connected Outcomes'
+                            : 'Not Connected Outcomes',
+                        style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
               ),
+              const SizedBox(width: 6),
+              if (_isCallConnected)
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _allowUnconnectedOverrideForShortCalls = !_allowUnconnectedOverrideForShortCalls;
+                      _selectedDisposition = _allowUnconnectedOverrideForShortCalls
+                          ? 'NOT_CONNECTED_BUSY'
+                          : 'CONNECTED_INTERESTED';
+                    });
+                  },
+                  icon: const Icon(Icons.swap_horiz, size: 16),
+                  label: Text(
+                    _allowUnconnectedOverrideForShortCalls ? 'Show Connected' : 'Show Unconnected',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.lock_outline_rounded, size: 12, color: Colors.grey.shade700),
+                      const SizedBox(width: 3),
+                      Text(
+                        'Connected Locked (0s)',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 6),
@@ -1243,11 +1282,14 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
             ),
           ],
 
-          // Filtered Choice Chips
+          // Filtered Choice Chips (Only unlocked after call connects with > 0s)
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: (_isCallConnected ? _connectedOptions : _unconnectedOptions).map((opt) {
+            children: ((_isCallConnected && !_allowUnconnectedOverrideForShortCalls)
+                    ? _connectedOptions
+                    : _unconnectedOptions)
+                .map((opt) {
               final isSelected = _selectedDisposition == opt['id'];
               final color = opt['color'] as Color;
               return ChoiceChip(
@@ -1355,48 +1397,87 @@ class _CallingDeskScreenState extends State<CallingDeskScreen> with WidgetsBindi
         ],
       ),
     ),
-  );
+  ),
+);
 }
 
   Color _getTimingTierBgColor() {
     switch (_timingClassification) {
       case 'CONNECTED_CONVERSATION':
-        return Colors.green.withValues(alpha: 0.1);
+        return const Color(0xFFF0FDF4); // soft emerald
       case 'CONNECTED_SHORT':
-        return Colors.amber.withValues(alpha: 0.1);
+        return const Color(0xFFFEFCE8); // soft warm amber
       case 'VOICEMAIL':
-        return Colors.deepPurple.withValues(alpha: 0.1);
+        return const Color(0xFFFAF5FF); // soft lavender
       case 'NOT_CONNECTED':
       default:
-        return Colors.blueGrey.withValues(alpha: 0.08);
+        return _verifiedCallLog?.isDialed == true
+            ? const Color(0xFFFFF7ED) // dialed 0s warm orange
+            : const Color(0xFFF8FAFC); // not dialed cool slate
     }
   }
 
   Color _getTimingTierBorderColor() {
     switch (_timingClassification) {
       case 'CONNECTED_CONVERSATION':
-        return Colors.green.shade400;
+        return const Color(0xFF86EFAC);
       case 'CONNECTED_SHORT':
-        return Colors.amber.shade400;
+        return const Color(0xFFFDE047);
       case 'VOICEMAIL':
-        return Colors.deepPurple.shade300;
+        return const Color(0xFFD8B4FE);
       case 'NOT_CONNECTED':
       default:
-        return Colors.blueGrey.shade300;
+        return _verifiedCallLog?.isDialed == true
+            ? const Color(0xFFFDBA74)
+            : const Color(0xFFCBD5E1);
     }
   }
 
   Color _getTimingTierTextColor() {
     switch (_timingClassification) {
       case 'CONNECTED_CONVERSATION':
-        return Colors.green.shade900;
+        return const Color(0xFF14532D);
       case 'CONNECTED_SHORT':
-        return Colors.amber.shade900;
+        return const Color(0xFF854D0E);
       case 'VOICEMAIL':
-        return Colors.deepPurple.shade900;
+        return const Color(0xFF581C87);
       case 'NOT_CONNECTED':
       default:
-        return Colors.blueGrey.shade800;
+        return _verifiedCallLog?.isDialed == true
+            ? const Color(0xFF9A3412)
+            : const Color(0xFF334155);
+    }
+  }
+
+  Color _getTimingTierIconBgColor() {
+    switch (_timingClassification) {
+      case 'CONNECTED_CONVERSATION':
+        return const Color(0xFFDCFCE7);
+      case 'CONNECTED_SHORT':
+        return const Color(0xFFFEF08A);
+      case 'VOICEMAIL':
+        return const Color(0xFFF3E8FF);
+      case 'NOT_CONNECTED':
+      default:
+        return _verifiedCallLog?.isDialed == true
+            ? const Color(0xFFFFEDD5)
+            : const Color(0xFFE2E8F0);
+    }
+  }
+
+  Color _getTimingTierButtonBgColor() {
+    switch (_timingClassification) {
+      case 'CONNECTED_CONVERSATION':
+        return const Color(0xFF16A34A);
+      case 'CONNECTED_SHORT':
+        return const Color(0xFFD97706);
+      case 'VOICEMAIL':
+        return const Color(0xFF7C3AED);
+      case 'NOT_CONNECTED':
+      default:
+        return _verifiedCallLog?.isDialed == true
+            ? const Color(0xFFEA580C)
+            : const Color(0xFF2563EB); // vibrant modern blue for ready to call
     }
   }
 
