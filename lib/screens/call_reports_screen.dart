@@ -138,138 +138,208 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      body: RefreshIndicator(
-        onRefresh: _loadReportData,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Period Selector Tabs
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: _periodOptions.map((opt) {
-                    final isSelected = _selectedPeriod == opt['id'];
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8.0),
-                      child: FilterChip(
-                        selected: isSelected,
-                        label: Text(
-                          opt['id'] == 'custom' && _customDateRange != null
-                              ? '${_customDateRange!.start.day}/${_customDateRange!.start.month} - ${_customDateRange!.end.day}/${_customDateRange!.end.month}'
-                              : opt['label']!,
-                          style: TextStyle(
-                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                          ),
-                        ),
-                        onSelected: (val) {
-                          if (opt['id'] == 'custom') {
-                            _pickCustomDateRange();
-                          } else {
-                            setState(() {
-                              _selectedPeriod = opt['id']!;
-                              _customDateRange = null;
-                            });
-                            _loadReportData();
-                          }
-                        },
-                      ),
-                    );
-                  }).toList(),
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        body: Column(
+          children: [
+            Container(
+              color: colorScheme.surface,
+              child: TabBar(
+                indicatorColor: colorScheme.primary,
+                labelColor: colorScheme.primary,
+                unselectedLabelColor: colorScheme.onSurfaceVariant,
+                labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+                tabs: const [
+                  Tab(
+                    icon: Icon(Icons.analytics_outlined),
+                    text: 'Performance Summary',
+                  ),
+                  Tab(
+                    icon: Icon(Icons.phone_forwarded),
+                    text: 'Dialed Calls List',
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  _buildPerformanceSummaryTab(colorScheme),
+                  _buildDialedCallsListTab(colorScheme),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPeriodSelector() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: _periodOptions.map((opt) {
+          final isSelected = _selectedPeriod == opt['id'];
+          return Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: FilterChip(
+              selected: isSelected,
+              label: Text(
+                opt['id'] == 'custom' && _customDateRange != null
+                    ? '${_customDateRange!.start.day}/${_customDateRange!.start.month} - ${_customDateRange!.end.day}/${_customDateRange!.end.month}'
+                    : opt['label']!,
+                style: TextStyle(
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
-              const SizedBox(height: 14),
+              onSelected: (val) {
+                if (opt['id'] == 'custom') {
+                  _pickCustomDateRange();
+                } else {
+                  setState(() {
+                    _selectedPeriod = opt['id']!;
+                    _customDateRange = null;
+                  });
+                  _loadReportData();
+                }
+              },
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
 
-              if (_isLoading && _summaryData == null)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 40.0),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (_errorMessage != null && _summaryData == null)
-                _buildErrorCard()
-              else ...[
-                // Top KPI Summary Metrics Grid
-                _buildKpiMetricsGrid(colorScheme),
-                const SizedBox(height: 16),
-
-                // Spoken Duration Timing Breakdown
-                _buildTimingTiersCard(colorScheme),
-                const SizedBox(height: 20),
-
-                // Dialed Calls Feed Header & Search
-                const Text(
-                  'Dialed Call History',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 10),
-
-                // Search Bar
-                TextField(
-                  controller: _searchController,
-                  onSubmitted: (_) => _loadReportData(),
-                  decoration: InputDecoration(
-                    hintText: 'Search by client name, mobile, notes...',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: _searchController.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _searchController.clear();
-                              _loadReportData();
-                            },
-                          )
-                        : null,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    filled: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  ),
-                ),
-                const SizedBox(height: 10),
-
-                // Status Filter Chips
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: _statusFilters.map((flt) {
-                      final isSelected = _selectedStatus == flt['id'];
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 6.0),
-                        child: ChoiceChip(
-                          label: Text(flt['label']!, style: const TextStyle(fontSize: 12)),
-                          selected: isSelected,
-                          onSelected: (val) {
-                            if (val) {
-                              setState(() => _selectedStatus = flt['id']!);
-                              _loadReportData();
-                            }
-                          },
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ),
-                const SizedBox(height: 14),
-
-                // Call Logs List
-                if (_callLogs.isEmpty)
-                  _buildEmptyCallLogsCard()
-                else
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _callLogs.length,
-                    separatorBuilder: (context, index) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      return _buildCallLogItem(context, _callLogs[index]);
-                    },
-                  ),
-              ],
-              const SizedBox(height: 30),
+  Widget _buildPerformanceSummaryTab(ColorScheme colorScheme) {
+    return RefreshIndicator(
+      onRefresh: _loadReportData,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildPeriodSelector(),
+            const SizedBox(height: 14),
+            if (_isLoading && _summaryData == null)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 40.0),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_errorMessage != null && _summaryData == null)
+              _buildErrorCard()
+            else ...[
+              _buildKpiMetricsGrid(colorScheme),
+              const SizedBox(height: 16),
+              _buildTimingTiersCard(colorScheme),
             ],
-          ),
+            const SizedBox(height: 30),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDialedCallsListTab(ColorScheme colorScheme) {
+    return RefreshIndicator(
+      onRefresh: _loadReportData,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Period filter
+            _buildPeriodSelector(),
+            const SizedBox(height: 12),
+
+            // Search Bar
+            TextField(
+              controller: _searchController,
+              onSubmitted: (_) => _loadReportData(),
+              decoration: InputDecoration(
+                hintText: 'Search by client name, mobile, notes...',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _searchController.clear();
+                          _loadReportData();
+                        },
+                      )
+                    : null,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                filled: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Status Filter Chips
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _statusFilters.map((flt) {
+                  final isSelected = _selectedStatus == flt['id'];
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 6.0),
+                    child: ChoiceChip(
+                      label: Text(flt['label']!, style: const TextStyle(fontSize: 12)),
+                      selected: isSelected,
+                      onSelected: (val) {
+                        if (val) {
+                          setState(() => _selectedStatus = flt['id']!);
+                          _loadReportData();
+                        }
+                      },
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Count header
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Dialed Records (${_callLogs.length})',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
+                ),
+                Text(
+                  'Period: ${_selectedPeriod.toUpperCase()}',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: colorScheme.primary),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // Call Logs List
+            if (_isLoading && _callLogs.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 40.0),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_errorMessage != null && _callLogs.isEmpty)
+              _buildErrorCard()
+            else if (_callLogs.isEmpty)
+              _buildEmptyCallLogsCard()
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _callLogs.length,
+                separatorBuilder: (context, index) => const SizedBox(height: 10),
+                itemBuilder: (context, index) {
+                  return _buildCallLogItem(context, _callLogs[index]);
+                },
+              ),
+            const SizedBox(height: 30),
+          ],
         ),
       ),
     );

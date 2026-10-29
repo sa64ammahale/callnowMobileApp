@@ -44,10 +44,17 @@ class _LeadsScreenState extends State<LeadsScreen> {
     });
 
     try {
-      final batch = await ApiService.getBatchLeads(limit: 50);
+      // Dedicated CRM Leads section - strictly distinct from calling desk batch
+      final res = await ApiService.getCreatedLeads(limit: 100, source: 'all');
+      final raw = res['leads'];
+      List<Map<String, dynamic>> list = [];
+      if (raw is List) {
+        list = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      }
+
       if (mounted) {
         setState(() {
-          _allLeads = batch;
+          _allLeads = list;
           _isLoading = false;
         });
         _applyFilters();
@@ -60,6 +67,196 @@ class _LeadsScreenState extends State<LeadsScreen> {
         });
       }
     }
+  }
+
+  void _showAddLeadDialog() {
+    final formKey = GlobalKey<FormState>();
+    final nameCtrl = TextEditingController();
+    final mobileCtrl = TextEditingController();
+    final companyCtrl = TextEditingController();
+    final pkgCtrl = TextEditingController();
+    final notesCtrl = TextEditingController();
+    String selectedSource = 'MAIN';
+    bool isSubmitting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (modalCtx, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                top: 20,
+                left: 20,
+                right: 20,
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+              ),
+              child: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade400,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Create New Lead',
+                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.pop(ctx),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: nameCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Customer Name *',
+                          prefixIcon: Icon(Icons.person_outline),
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter customer name' : null,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: mobileCtrl,
+                        keyboardType: TextInputType.phone,
+                        maxLength: 10,
+                        decoration: const InputDecoration(
+                          labelText: 'Mobile Number *',
+                          prefixIcon: Icon(Icons.phone_outlined),
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          counterText: '',
+                        ),
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) return 'Please enter mobile number';
+                          final clean = v.replaceAll(RegExp(r'[^0-9]'), '');
+                          if (clean.length < 10) return 'Enter a valid 10-digit mobile number';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: companyCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Company Name',
+                          prefixIcon: Icon(Icons.business_outlined),
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: pkgCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Loan Amount / Package',
+                          prefixIcon: Icon(Icons.currency_rupee),
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: notesCtrl,
+                        maxLines: 2,
+                        decoration: const InputDecoration(
+                          labelText: 'Other Info / Notes',
+                          prefixIcon: Icon(Icons.notes_outlined),
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: FilledButton.icon(
+                          onPressed: isSubmitting
+                              ? null
+                              : () async {
+                                  if (!formKey.currentState!.validate()) return;
+                                  setModalState(() => isSubmitting = true);
+                                  try {
+                                    await ApiService.createLead(
+                                      name: nameCtrl.text.trim(),
+                                      mobile: mobileCtrl.text.trim(),
+                                      company: companyCtrl.text.trim(),
+                                      package: pkgCtrl.text.trim(),
+                                      otherInfo: notesCtrl.text.trim(),
+                                      source: selectedSource,
+                                    );
+                                    if (ctx.mounted) {
+                                      Navigator.pop(ctx);
+                                    }
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Lead created successfully!'),
+                                          backgroundColor: Colors.green,
+                                        ),
+                                      );
+                                      _fetchLeads();
+                                    }
+                                  } catch (err) {
+                                    setModalState(() => isSubmitting = false);
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text(err.toString().replaceAll('Exception: ', '')),
+                                          backgroundColor: Colors.red.shade800,
+                                        ),
+                                      );
+                                    }
+                                  }
+                                },
+                          icon: isSubmitting
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                                )
+                              : const Icon(Icons.save),
+                          label: Text(
+                            isSubmitting ? 'Creating Lead...' : 'Save & Add Lead',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.blue.shade700,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   void _applyFilters() {
@@ -268,6 +465,13 @@ class _LeadsScreenState extends State<LeadsScreen> {
     final notCalledCount = _allLeads.where((l) => (l['last_status'] ?? '').toString().toLowerCase() == 'not called').length;
 
     return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showAddLeadDialog,
+        icon: const Icon(Icons.person_add_alt_1),
+        label: const Text('Add Lead', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.blue.shade700,
+        foregroundColor: Colors.white,
+      ),
       body: RefreshIndicator(
         onRefresh: _fetchLeads,
         child: Column(
@@ -288,7 +492,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    _buildStatCol('Total In Queue', _allLeads.length.toString(), Colors.white),
+                    _buildStatCol('CRM Leads', _allLeads.length.toString(), Colors.white),
                     Container(height: 32, width: 1, color: Colors.white24),
                     _buildStatCol('Not Called', notCalledCount.toString(), Colors.orangeAccent),
                     Container(height: 32, width: 1, color: Colors.white24),

@@ -220,6 +220,105 @@ class ApiService {
     }
   }
 
+  /// Create a new CRM lead from mobile app
+  static Future<Map<String, dynamic>> createLead({
+    required String name,
+    required String mobile,
+    String? company,
+    String? package,
+    String? otherInfo,
+    String? status,
+    String source = 'MAIN',
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/telecaller/leads'),
+      headers: _headers,
+      body: json.encode({
+        'name': name.trim(),
+        'mobile': mobile.trim(),
+        'company': company?.trim() ?? '',
+        'package': package?.trim() ?? '',
+        'other_info': otherInfo?.trim() ?? '',
+        'status': status?.trim() ?? 'Not Called',
+        'source': source,
+      }),
+    );
+
+    final data = json.decode(response.body);
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      if (data['success'] == true) return _toMap(data['data']);
+    } else if (response.statusCode == 422) {
+      final msg = data['message'] ?? data['error']?['message'] ?? 'Number is registered on Do Not Call / DND list';
+      throw Exception(msg);
+    } else if (response.statusCode == 401) {
+      await ConfigService.clearAuthData();
+      throw Exception('Session expired. Please login again.');
+    }
+    throw Exception(data['message'] ?? data['error']?['message'] ?? 'Failed to create lead');
+  }
+
+  /// Fetch created / assigned leads with filters & pagination
+  static Future<Map<String, dynamic>> getCreatedLeads({
+    int page = 1,
+    int limit = 30,
+    String? search,
+    String? status,
+    String? source,
+  }) async {
+    final queryParams = <String, String>{
+      'page': page.toString(),
+      'limit': limit.toString(),
+    };
+    if (search != null && search.isNotEmpty) queryParams['search'] = search;
+    if (status != null && status.isNotEmpty && status != 'all') queryParams['status'] = status;
+    if (source != null && source.isNotEmpty && source != 'all') queryParams['source'] = source;
+
+    final uri = Uri.parse('$_baseUrl/telecaller/leads').replace(queryParameters: queryParams);
+    final response = await http.get(uri, headers: _headers);
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['success'] == true && data['data'] != null) {
+        return _toMap(data['data']);
+      }
+      return {'leads': [], 'pagination': {}};
+    } else if (response.statusCode == 401) {
+      await ConfigService.clearAuthData();
+      throw Exception('Session expired. Please login again.');
+    } else {
+      throw Exception('Failed to get leads: ${response.statusCode}');
+    }
+  }
+
+  /// Update an existing lead
+  static Future<void> updateLead({
+    required int id,
+    required String source,
+    String? name,
+    String? company,
+    String? package,
+    String? otherInfo,
+    String? status,
+  }) async {
+    final payload = <String, dynamic>{};
+    if (name != null) payload['name'] = name;
+    if (company != null) payload['company'] = company;
+    if (package != null) payload['package'] = package;
+    if (otherInfo != null) payload['other_info'] = otherInfo;
+    if (status != null) payload['status'] = status;
+
+    final response = await http.put(
+      Uri.parse('$_baseUrl/telecaller/leads/$id?source=$source'),
+      headers: _headers,
+      body: json.encode(payload),
+    );
+
+    final data = json.decode(response.body);
+    if (response.statusCode != 200 || data['success'] != true) {
+      throw Exception(data['message'] ?? 'Failed to update lead');
+    }
+  }
+
   /// Get aggregated performance reports summary
   static Future<Map<String, dynamic>> getCallReportSummary({
     String period = 'today',

@@ -5,6 +5,7 @@ import 'package:callnow_new/widgets/splash_screen.dart';
 import 'package:callnow_new/screens/login_screen.dart';
 import 'package:callnow_new/screens/home_screen.dart';
 import 'package:callnow_new/screens/leads_screen.dart';
+import 'package:callnow_new/screens/call_reports_screen.dart';
 
 void main() {
   testWidgets('Splash screen displays branding', (WidgetTester tester) async {
@@ -43,7 +44,7 @@ void main() {
     expect(find.text('Quick Shortcuts'), findsOneWidget);
   });
 
-  testWidgets('Leads screen displays search bar and queue header', (WidgetTester tester) async {
+  testWidgets('Leads screen displays search bar, add lead button and lead filters', (WidgetTester tester) async {
     await tester.pumpWidget(
       const MaterialApp(
         home: LeadsScreen(),
@@ -51,8 +52,19 @@ void main() {
     );
 
     expect(find.byType(TextField), findsOneWidget);
-    expect(find.text('Total In Queue'), findsOneWidget);
-    expect(find.text('Not Called'), findsOneWidget);
+    expect(find.text('Add Lead'), findsOneWidget);
+    expect(find.byIcon(Icons.person_add_alt_1), findsWidgets);
+  });
+
+  testWidgets('Call reports screen displays tabs for Performance Summary and Dialed Calls List', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: CallReportsScreen(),
+      ),
+    );
+
+    expect(find.text('Performance Summary'), findsOneWidget);
+    expect(find.text('Dialed Calls List'), findsOneWidget);
   });
 
   testWidgets('Home screen navigation contains 5 destinations', (WidgetTester tester) async {
@@ -69,4 +81,5 @@ void main() {
     expect(find.widgetWithText(NavigationDestination, 'Profile'), findsOneWidget);
   });
 }
+
 
