@@ -153,6 +153,7 @@ class NotificationService {
         scheduledDate,
         notificationDetails,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
         payload: jsonEncode(payloadMap),
       );
     } catch (e) {
