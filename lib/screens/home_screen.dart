@@ -39,9 +39,38 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  int _reportsInitialTab = 0;
+  String? _reportsInitialStatus;
+  String? _reportsInitialTimingTier;
+  String? _reportsInitialPeriod;
+  final GlobalKey<CallReportsScreenState> _reportsKey = GlobalKey<CallReportsScreenState>();
+
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
+    });
+  }
+
+  void _openReportsWithFilter({
+    int tabIndex = 1,
+    String? status,
+    String? timingTier,
+    String? period,
+  }) {
+    setState(() {
+      _reportsInitialTab = tabIndex;
+      _reportsInitialStatus = status;
+      _reportsInitialTimingTier = timingTier;
+      _reportsInitialPeriod = period ?? 'today';
+      _selectedIndex = 3;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _reportsKey.currentState?.applyExternalFilter(
+        tabIndex: tabIndex,
+        status: status,
+        timingTier: timingTier,
+        period: period ?? 'today',
+      );
     });
   }
 
@@ -69,13 +98,20 @@ class _HomeScreenState extends State<HomeScreen> {
         onStartCalling: () => _onItemTapped(2),
         onOpenLeads: () => _onItemTapped(1),
         onOpenReports: () => _onItemTapped(3),
+        onOpenReportsFiltered: _openReportsWithFilter,
         onOpenProfile: () => _onItemTapped(4),
       ),
       LeadsScreen(
         onOpenCallingDesk: () => _onItemTapped(2),
       ),
       const CallingDeskScreen(),
-      const CallReportsScreen(),
+      CallReportsScreen(
+        key: _reportsKey,
+        initialTabIndex: _reportsInitialTab,
+        initialStatus: _reportsInitialStatus,
+        initialTimingTier: _reportsInitialTimingTier,
+        initialPeriod: _reportsInitialPeriod,
+      ),
       const ProfilePage(),
     ];
 
@@ -150,6 +186,7 @@ class DashboardPage extends StatefulWidget {
   final VoidCallback onStartCalling;
   final VoidCallback? onOpenLeads;
   final VoidCallback onOpenReports;
+  final Function({int tabIndex, String? status, String? timingTier, String? period})? onOpenReportsFiltered;
   final VoidCallback onOpenProfile;
 
   const DashboardPage({
@@ -157,6 +194,7 @@ class DashboardPage extends StatefulWidget {
     required this.onStartCalling,
     this.onOpenLeads,
     required this.onOpenReports,
+    this.onOpenReportsFiltered,
     required this.onOpenProfile,
   });
 
@@ -370,7 +408,13 @@ class _DashboardPageState extends State<DashboardPage> {
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 TextButton(
-                  onPressed: widget.onOpenReports,
+                  onPressed: () {
+                    if (widget.onOpenReportsFiltered != null) {
+                      widget.onOpenReportsFiltered!(tabIndex: 0, period: 'today');
+                    } else {
+                      widget.onOpenReports();
+                    }
+                  },
                   child: const Text('View All', style: TextStyle(fontSize: 12)),
                 ),
               ],
@@ -399,7 +443,13 @@ class _DashboardPageState extends State<DashboardPage> {
                     subtitle: "Today's dialed calls",
                     icon: Icons.phone_forwarded,
                     color: Colors.blue,
-                    onTap: widget.onOpenReports,
+                    onTap: () {
+                      if (widget.onOpenReportsFiltered != null) {
+                        widget.onOpenReportsFiltered!(tabIndex: 1, status: 'all', period: 'today');
+                      } else {
+                        widget.onOpenReports();
+                      }
+                    },
                   ),
                   _buildStatCard(
                     context,
@@ -408,7 +458,13 @@ class _DashboardPageState extends State<DashboardPage> {
                     subtitle: '$connectionRate% picked up',
                     icon: Icons.phone_in_talk,
                     color: Colors.green,
-                    onTap: widget.onOpenReports,
+                    onTap: () {
+                      if (widget.onOpenReportsFiltered != null) {
+                        widget.onOpenReportsFiltered!(tabIndex: 1, timingTier: 'conversation', period: 'today');
+                      } else {
+                        widget.onOpenReports();
+                      }
+                    },
                   ),
                   _buildStatCard(
                     context,
@@ -417,7 +473,13 @@ class _DashboardPageState extends State<DashboardPage> {
                     subtitle: 'Cumulative spoken time',
                     icon: Icons.timer,
                     color: Colors.purple,
-                    onTap: widget.onOpenReports,
+                    onTap: () {
+                      if (widget.onOpenReportsFiltered != null) {
+                        widget.onOpenReportsFiltered!(tabIndex: 1, timingTier: 'conversation', period: 'today');
+                      } else {
+                        widget.onOpenReports();
+                      }
+                    },
                   ),
                   _buildStatCard(
                     context,
@@ -426,7 +488,13 @@ class _DashboardPageState extends State<DashboardPage> {
                     subtitle: 'Scheduled callbacks',
                     icon: Icons.event_repeat,
                     color: Colors.amber.shade900,
-                    onTap: widget.onOpenReports,
+                    onTap: () {
+                      if (widget.onOpenReportsFiltered != null) {
+                        widget.onOpenReportsFiltered!(tabIndex: 1, status: 'Follow-up', period: 'today');
+                      } else {
+                        widget.onOpenReports();
+                      }
+                    },
                   ),
                 ],
               ),

@@ -492,11 +492,35 @@ class _LeadsScreenState extends State<LeadsScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    _buildStatCol('CRM Leads', _allLeads.length.toString(), Colors.white),
+                    _buildStatCol(
+                      'CRM Leads',
+                      _allLeads.length.toString(),
+                      Colors.white,
+                      onTap: () {
+                        setState(() => _activeFilter = 'all');
+                        _applyFilters();
+                      },
+                    ),
                     Container(height: 32, width: 1, color: Colors.white24),
-                    _buildStatCol('Not Called', notCalledCount.toString(), Colors.orangeAccent),
+                    _buildStatCol(
+                      'Not Called',
+                      notCalledCount.toString(),
+                      Colors.orangeAccent,
+                      onTap: () {
+                        setState(() => _activeFilter = 'not_called');
+                        _applyFilters();
+                      },
+                    ),
                     Container(height: 32, width: 1, color: Colors.white24),
-                    _buildStatCol('Showing', _filteredLeads.length.toString(), Colors.lightGreenAccent),
+                    _buildStatCol(
+                      'Showing',
+                      _filteredLeads.length.toString(),
+                      Colors.lightGreenAccent,
+                      onTap: () {
+                        setState(() => _activeFilter = 'all');
+                        _applyFilters();
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -555,22 +579,29 @@ class _LeadsScreenState extends State<LeadsScreen> {
     );
   }
 
-  Widget _buildStatCol(String label, String value, Color valueColor) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: valueColor,
-          ),
+  Widget _buildStatCol(String label, String value, Color valueColor, {VoidCallback? onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: Column(
+          children: [
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: valueColor,
+              ),
+            ),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 11, color: Colors.white70),
+            ),
+          ],
         ),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 11, color: Colors.white70),
-        ),
-      ],
+      ),
     );
   }
 
@@ -620,6 +651,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
     }
 
     if (_filteredLeads.isEmpty) {
+      final bool hasQuery = _searchController.text.isNotEmpty || _activeFilter != 'all';
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
@@ -628,18 +660,35 @@ class _LeadsScreenState extends State<LeadsScreen> {
             children: [
               Icon(Icons.person_search_outlined, size: 54, color: Colors.grey.shade400),
               const SizedBox(height: 12),
-              const Text(
-                'No leads found matching criteria',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              Text(
+                hasQuery
+                    ? 'No leads found matching criteria'
+                    : 'No CRM leads found matching criteria.',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 6),
               Text(
-                _searchController.text.isNotEmpty
-                    ? 'Try clearing the search query.'
-                    : 'Pull down to refresh assigned leads batch from server.',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                hasQuery
+                    ? 'Try clearing the search query or active filter.'
+                    : "Tap '+ Add Lead' to create your first lead.",
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
                 textAlign: TextAlign.center,
               ),
+              if (!hasQuery) ...[
+                const SizedBox(height: 18),
+                ElevatedButton.icon(
+                  onPressed: _showAddLeadDialog,
+                  icon: const Icon(Icons.person_add_alt_1),
+                  label: const Text('+ Add Lead'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

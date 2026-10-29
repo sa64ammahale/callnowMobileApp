@@ -3,16 +3,29 @@ import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
 
 class CallReportsScreen extends StatefulWidget {
-  const CallReportsScreen({super.key});
+  final int initialTabIndex;
+  final String? initialStatus;
+  final String? initialTimingTier;
+  final String? initialPeriod;
+
+  const CallReportsScreen({
+    super.key,
+    this.initialTabIndex = 0,
+    this.initialStatus,
+    this.initialTimingTier,
+    this.initialPeriod,
+  });
 
   @override
-  State<CallReportsScreen> createState() => _CallReportsScreenState();
+  State<CallReportsScreen> createState() => CallReportsScreenState();
 }
 
-class _CallReportsScreenState extends State<CallReportsScreen> {
-  String _selectedPeriod = 'today';
-  String _selectedTimingTier = 'all';
-  String _selectedStatus = 'all';
+class CallReportsScreenState extends State<CallReportsScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  late String _selectedPeriod;
+  late String _selectedTimingTier;
+  late String _selectedStatus;
   final TextEditingController _searchController = TextEditingController();
 
   DateTimeRange? _customDateRange;
@@ -42,14 +55,40 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
   @override
   void initState() {
     super.initState();
+    _selectedPeriod = widget.initialPeriod ?? 'today';
+    _selectedTimingTier = widget.initialTimingTier ?? 'all';
+    _selectedStatus = widget.initialStatus ?? 'all';
+    _tabController = TabController(
+      length: 2,
+      vsync: this,
+      initialIndex: widget.initialTabIndex,
+    );
     _loadReportData();
     _searchController.addListener(_onSearchChanged);
   }
 
   @override
   void dispose() {
+    _tabController.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void applyExternalFilter({
+    int tabIndex = 1,
+    String? status,
+    String? timingTier,
+    String? period,
+  }) {
+    setState(() {
+      if (period != null) _selectedPeriod = period;
+      if (status != null) _selectedStatus = status;
+      if (timingTier != null) _selectedTimingTier = timingTier;
+    });
+    _loadReportData();
+    if (_tabController.index != tabIndex) {
+      _tabController.animateTo(tabIndex);
+    }
   }
 
   void _onSearchChanged() {
@@ -138,40 +177,39 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        body: Column(
-          children: [
-            Container(
-              color: colorScheme.surface,
-              child: TabBar(
-                indicatorColor: colorScheme.primary,
-                labelColor: colorScheme.primary,
-                unselectedLabelColor: colorScheme.onSurfaceVariant,
-                labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
-                tabs: const [
-                  Tab(
-                    icon: Icon(Icons.analytics_outlined),
-                    text: 'Performance Summary',
-                  ),
-                  Tab(
-                    icon: Icon(Icons.phone_forwarded),
-                    text: 'Dialed Calls List',
-                  ),
-                ],
-              ),
+    return Scaffold(
+      body: Column(
+        children: [
+          Container(
+            color: colorScheme.surface,
+            child: TabBar(
+              controller: _tabController,
+              indicatorColor: colorScheme.primary,
+              labelColor: colorScheme.primary,
+              unselectedLabelColor: colorScheme.onSurfaceVariant,
+              labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+              tabs: const [
+                Tab(
+                  icon: Icon(Icons.analytics_outlined),
+                  text: 'Performance Summary',
+                ),
+                Tab(
+                  icon: Icon(Icons.phone_forwarded),
+                  text: 'Dialed Calls List',
+                ),
+              ],
             ),
-            Expanded(
-              child: TabBarView(
-                children: [
-                  _buildPerformanceSummaryTab(colorScheme),
-                  _buildDialedCallsListTab(colorScheme),
-                ],
-              ),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildPerformanceSummaryTab(colorScheme),
+                _buildDialedCallsListTab(colorScheme),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -403,7 +441,7 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
         _buildMetricTile(
           title: 'Total Dialed',
           value: totalCalls.toString(),
-          subtitle: 'calls completed',
+          subtitle: 'calls completed (tap to view)',
           icon: Icons.phone_forwarded,
           iconColor: Colors.blue,
           onTap: () {
@@ -412,12 +450,13 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
               _selectedTimingTier = 'all';
             });
             _loadReportData();
+            _tabController.animateTo(1);
           },
         ),
         _buildMetricTile(
           title: 'Total Talk Time',
           value: totalDuration.toString(),
-          subtitle: 'cumulative spoken',
+          subtitle: 'cumulative spoken (tap to view)',
           icon: Icons.timer_outlined,
           iconColor: Colors.teal,
           onTap: () {
@@ -425,25 +464,27 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
               _selectedTimingTier = 'conversation';
             });
             _loadReportData();
+            _tabController.animateTo(1);
           },
         ),
         _buildMetricTile(
           title: 'Connection Rate',
           value: '$connectionRate%',
-          subtitle: 'picked up by clients',
+          subtitle: 'picked up by clients (tap to view)',
           icon: Icons.check_circle_outline,
           iconColor: Colors.green,
           onTap: () {
             setState(() {
-              _selectedStatus = 'all';
+              _selectedTimingTier = 'conversation';
             });
             _loadReportData();
+            _tabController.animateTo(1);
           },
         ),
         _buildMetricTile(
           title: 'Avg Duration',
           value: '${avgDuration}s',
-          subtitle: 'per call dialed',
+          subtitle: 'per call dialed (tap to view)',
           icon: Icons.speed_rounded,
           iconColor: Colors.purple,
           onTap: () {
@@ -451,6 +492,7 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
               _selectedTimingTier = 'conversation';
             });
             _loadReportData();
+            _tabController.animateTo(1);
           },
         ),
       ],
@@ -628,6 +670,7 @@ class _CallReportsScreenState extends State<CallReportsScreen> {
           _selectedTimingTier = isSelected ? 'all' : tierId;
         });
         _loadReportData();
+        _tabController.animateTo(1);
       },
       borderRadius: BorderRadius.circular(10),
       child: Container(

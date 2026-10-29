@@ -67,6 +67,34 @@ void main() {
     expect(find.text('Dialed Calls List'), findsOneWidget);
   });
 
+  testWidgets('Dashboard stat card triggers filtered reports navigation', (WidgetTester tester) async {
+    int requestedTab = -1;
+    String? requestedStatus;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DashboardPage(
+            onStartCalling: () {},
+            onOpenReports: () {},
+            onOpenReportsFiltered: ({int tabIndex = 1, String? status, String? timingTier, String? period}) {
+              requestedTab = tabIndex;
+              requestedStatus = status;
+            },
+            onOpenProfile: () {},
+          ),
+        ),
+      ),
+    );
+
+    // Tap on Calls Dialed card
+    await tester.tap(find.text('Calls Dialed'));
+    await tester.pump();
+
+    expect(requestedTab, 1);
+    expect(requestedStatus, 'all');
+  });
+
   testWidgets('Home screen navigation contains 5 destinations', (WidgetTester tester) async {
     await tester.pumpWidget(
       const MaterialApp(
