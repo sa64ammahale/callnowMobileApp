@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:callnow_new/services/config_service.dart';
+import 'package:callnow_new/model/user_profile.dart';
 
 class ApiService {
   static String get _baseUrl {
@@ -28,8 +30,8 @@ class ApiService {
     
     for (final fieldName in fieldNames) {
       final url = '$_baseUrl/auth/login';
-      print('[ApiService] Login request to: $url');
-      print('[ApiService] Login payload: $fieldName=$email');
+      debugPrint('[ApiService] Login request to: $url');
+      debugPrint('[ApiService] Login payload: $fieldName=$email');
 
       final body = {fieldName: email, 'password': password};
       final response = await http.post(
@@ -38,7 +40,7 @@ class ApiService {
         body: json.encode(body),
       );
 
-      print('[ApiService] Login response: ${response.statusCode} - ${response.body}');
+      debugPrint('[ApiService] Login response: ${response.statusCode} - ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -61,7 +63,7 @@ class ApiService {
         try {
           final error = json.decode(response.body);
           final msg = error['error']?['message'] ?? error['message'] ?? 'Invalid credentials';
-          print('[ApiService] 401 Error: $msg (tried field: $fieldName)');
+          debugPrint('[ApiService] 401 Error: $msg (tried field: $fieldName)');
           // If this is the last field name, throw the error
           if (fieldName == fieldNames.last) {
             throw Exception('Login failed: $msg. Tried fields: ${fieldNames.join(', ')}');
@@ -129,7 +131,7 @@ class ApiService {
           headers: _headers,
         );
         lastResponse = response;
-        print('[ApiService] GET $url -> ${response.statusCode}');
+        debugPrint('[ApiService] GET $url -> ${response.statusCode}');
 
         if (response.statusCode == 200) {
           final data = json.decode(response.body);
@@ -140,10 +142,14 @@ class ApiService {
               final nested = Map<String, dynamic>.from(profileData['user'] as Map);
               nested.forEach((k, v) => profileData.putIfAbsent(k, () => v));
             }
+            if (profileData.containsKey('profile') && profileData['profile'] is Map) {
+              final nested = Map<String, dynamic>.from(profileData['profile'] as Map);
+              nested.forEach((k, v) => profileData.putIfAbsent(k, () => v));
+            }
             if (_token != null && _token!.isNotEmpty) {
               await ConfigService.saveAuthData(_token!, profileData);
             }
-            return profileData;
+            return ConfigService.userData ?? profileData;
           }
         } else if (response.statusCode == 401) {
           await ConfigService.clearAuthData();
@@ -162,6 +168,12 @@ class ApiService {
       throw Exception('Failed to get profile: ${lastResponse.statusCode}');
     }
     throw Exception('Failed to get profile: Could not reach server');
+  }
+
+  /// Get strongly typed user profile
+  static Future<UserProfile> getUserProfile() async {
+    final data = await getProfile();
+    return UserProfile.fromJson(data);
   }
 
   /// Request Password Reset OTP to registered email
@@ -367,7 +379,18 @@ class ApiService {
   }
 
   static Future<void> logout() async {
-    await ConfigService.clearAuthData();
+    try {
+      if (_token != null && _token!.isNotEmpty) {
+        await http.post(
+          Uri.parse('$_baseUrl/auth/logout'),
+          headers: _headers,
+        ).timeout(const Duration(seconds: 4));
+      }
+    } catch (e) {
+      debugPrint('[ApiService] Backend logout notification error: $e');
+    } finally {
+      await ConfigService.clearAuthData();
+    }
   }
 
   static Map<String, dynamic> _toMap(dynamic data) {

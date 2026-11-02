@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:callnow_new/model/user_profile.dart';
 
 class ConfigService {
   static const String _baseUrlKey = 'base_url';
@@ -31,7 +32,7 @@ class ConfigService {
   }
 
   static String get baseUrl {
-    String url = (_initialized ? _cachedBaseUrl : _defaultBaseUrl).trim();
+    String url = _cachedBaseUrl.trim();
     while (url.endsWith('/')) {
       url = url.substring(0, url.length - 1);
     }
@@ -46,11 +47,14 @@ class ConfigService {
     }
     await prefs.setString(_baseUrlKey, normalizedUrl);
     _cachedBaseUrl = normalizedUrl;
+    _initialized = true;
   }
 
   static String? get token => _cachedToken;
 
   static Map<String, dynamic>? get userData => _cachedUserData;
+
+  static UserProfile get userProfile => UserProfile.fromJson(_cachedUserData ?? {});
 
   static bool get isLoggedIn => _cachedToken != null;
 
@@ -156,23 +160,55 @@ class ConfigService {
 
   static Future<void> saveAuthData(String token, Map<String, dynamic> userData, {String? fallbackEmail}) async {
     final prefs = await SharedPreferences.getInstance();
+
+    // Preserve existing cached user fields so an empty profile from the server doesn't wipe them out!
+    Map<String, dynamic> merged = {};
+    if (_cachedUserData != null) {
+      merged.addAll(_cachedUserData!);
+    }
+
     // Normalize if nested under 'user' or 'profile'
-    Map<String, dynamic> normalized = Map<String, dynamic>.from(userData);
-    if (normalized.containsKey('user') && normalized['user'] is Map) {
-      final nested = Map<String, dynamic>.from(normalized['user'] as Map);
-      nested.forEach((k, v) => normalized.putIfAbsent(k, () => v));
+    Map<String, dynamic> incoming = Map<String, dynamic>.from(userData);
+    if (incoming.containsKey('user') && incoming['user'] is Map) {
+      final nested = Map<String, dynamic>.from(incoming['user'] as Map);
+      nested.forEach((k, v) => incoming.putIfAbsent(k, () => v));
     }
-    if (normalized.containsKey('profile') && normalized['profile'] is Map) {
-      final nested = Map<String, dynamic>.from(normalized['profile'] as Map);
-      nested.forEach((k, v) => normalized.putIfAbsent(k, () => v));
+    if (incoming.containsKey('profile') && incoming['profile'] is Map) {
+      final nested = Map<String, dynamic>.from(incoming['profile'] as Map);
+      nested.forEach((k, v) => incoming.putIfAbsent(k, () => v));
     }
+
+    // Merge non-null, non-empty incoming values into merged
+    incoming.forEach((k, v) {
+      if (v != null && v != 'null' && v != '<null>') {
+        if (v is String && v.trim().isEmpty) return;
+        if (v is List && v.isEmpty) return;
+        merged[k] = v;
+      }
+    });
+
     if (fallbackEmail != null && fallbackEmail.trim().isNotEmpty && fallbackEmail.contains('@')) {
-      normalized.putIfAbsent('email', () => fallbackEmail.trim());
+      merged.putIfAbsent('email', () => fallbackEmail.trim());
+      merged.putIfAbsent('user_email', () => fallbackEmail.trim());
     }
+
+    // If name is still missing or generic 'Telecaller', derive a friendly name from email
+    final currentName = merged['name']?.toString().trim() ?? '';
+    final emailStr = merged['email']?.toString().trim() ?? (fallbackEmail?.trim() ?? '');
+    if ((currentName.isEmpty || currentName.toLowerCase() == 'telecaller') && emailStr.contains('@')) {
+      final prefix = emailStr.split('@').first;
+      final parts = prefix.split(RegExp(r'[._-]')).where((p) => p.isNotEmpty);
+      final capitalized = parts.map((p) => p[0].toUpperCase() + p.substring(1)).join(' ');
+      if (capitalized.isNotEmpty) {
+        merged['name'] = capitalized;
+      }
+      merged.putIfAbsent('username', () => prefix);
+    }
+
     await prefs.setString(_tokenKey, token);
-    await prefs.setString(_userDataKey, json.encode(normalized));
+    await prefs.setString(_userDataKey, json.encode(merged));
     _cachedToken = token;
-    _cachedUserData = normalized;
+    _cachedUserData = merged;
   }
 
   static Future<void> clearAuthData() async {

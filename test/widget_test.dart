@@ -102,7 +102,7 @@ void main() {
     expect(find.widgetWithText(NavigationDestination, 'Leads'), findsOneWidget);
     expect(find.widgetWithText(NavigationDestination, 'Calling Desk'), findsOneWidget);
     expect(find.widgetWithText(NavigationDestination, 'Reports'), findsOneWidget);
-    expect(find.widgetWithText(NavigationDestination, 'Profile'), findsOneWidget);
+    expect(find.widgetWithText(NavigationDestination, 'Settings'), findsOneWidget);
   });
 
   testWidgets('Dashboard displays Client Follow-Up Pipeline shortcut', (WidgetTester tester) async {
