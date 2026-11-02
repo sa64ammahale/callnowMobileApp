@@ -4,6 +4,7 @@ import 'package:callnow_new/widgets/splash_screen.dart';
 import 'package:callnow_new/screens/login_screen.dart';
 import 'package:callnow_new/screens/home_screen.dart';
 import 'package:callnow_new/screens/settings_screen.dart';
+import 'package:callnow_new/screens/profile_screen.dart';
 
 import 'package:callnow_new/screens/calling_desk_screen.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
@@ -152,6 +153,7 @@ class MyApp extends StatelessWidget {
         '/calling_desk': (context) => const CallingDeskScreen(),
         '/reports': (context) => const CallReportsScreen(),
         '/settings': (context) => const SettingsScreen(),
+        '/profile': (context) => const ProfileScreen(),
         '/followups': (context) => const FollowUpScreen(),
       },
       debugShowCheckedModeBanner: false,

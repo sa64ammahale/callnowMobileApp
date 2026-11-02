@@ -12,6 +12,7 @@ import 'package:callnow_new/screens/calling_desk_screen.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/screens/leads_screen.dart';
 import 'package:callnow_new/screens/followup_screen.dart';
+import 'package:callnow_new/screens/settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -149,7 +150,7 @@ class _HomeScreenState extends State<HomeScreen> {
       case 3:
         return 'CallNow - Call Reports';
       case 4:
-        return 'CallNow - Profile';
+        return 'CallNow - Settings';
       default:
         return 'CallNow';
     }
@@ -176,7 +177,7 @@ class _HomeScreenState extends State<HomeScreen> {
         initialTimingTier: _reportsInitialTimingTier,
         initialPeriod: _reportsInitialPeriod,
       ),
-      const ProfilePage(),
+      const SettingsScreen(),
     ];
 
     return Scaffold(
@@ -254,9 +255,9 @@ class _HomeScreenState extends State<HomeScreen> {
             label: 'Reports',
           ),
           NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Profile',
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Settings',
           ),
         ],
       ),
@@ -730,212 +731,6 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-// -----------------------------------------------------------------------------
-// PROFILE TAB (Logged-In User Credentials & Device Status)
-// -----------------------------------------------------------------------------
-class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
-
-  @override
-  State<ProfilePage> createState() => _ProfilePageState();
-}
-
-class _ProfilePageState extends State<ProfilePage> {
-  bool _vibrateOnEnd = true;
-  bool _keepScreenOn = true;
-  bool _quickWhatsAppPrompt = true;
-
-  Future<void> _refreshProfile() async {
-    try {
-      await ApiService.getProfile();
-    } catch (_) {}
-    if (mounted) setState(() {});
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final displayName = ConfigService.userDisplayName;
-    final email = ConfigService.userEmail.isNotEmpty ? ConfigService.userEmail : 'Active Agent Session';
-    final role = ConfigService.userRole;
-    final userId = ConfigService.userId;
-
-    return RefreshIndicator(
-      onRefresh: _refreshProfile,
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            const SizedBox(height: 12),
-            CircleAvatar(
-              radius: 38,
-              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-              child: Text(
-                displayName.toString().isNotEmpty ? displayName.toString()[0].toUpperCase() : 'T',
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.onPrimaryContainer,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              displayName.toString(),
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              email.toString(),
-              style: const TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    'Role: $role • ID: $userId',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blue,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.circle, color: Colors.green, size: 8),
-                      SizedBox(width: 4),
-                      Text(
-                        'Online',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-
-            // Calling Preferences
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Calling Preferences',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade700),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Card(
-              elevation: 1.5,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              child: Column(
-                children: [
-                  SwitchListTile(
-                    title: const Text('Vibrate on Call End', style: TextStyle(fontSize: 14)),
-                    subtitle: const Text('Haptic feedback when phone call disconnects', style: TextStyle(fontSize: 12)),
-                    value: _vibrateOnEnd,
-                    onChanged: (val) => setState(() => _vibrateOnEnd = val),
-                  ),
-                  const Divider(height: 1),
-                  SwitchListTile(
-                    title: const Text('Keep Screen Awake', style: TextStyle(fontSize: 14)),
-                    subtitle: const Text('Prevent display sleep during calling desk session', style: TextStyle(fontSize: 12)),
-                    value: _keepScreenOn,
-                    onChanged: (val) => setState(() => _keepScreenOn = val),
-                  ),
-                  const Divider(height: 1),
-                  SwitchListTile(
-                    title: const Text('Quick WhatsApp Intro', style: TextStyle(fontSize: 14)),
-                    subtitle: const Text('Pre-fill greeting when launching WhatsApp chat', style: TextStyle(fontSize: 12)),
-                    value: _quickWhatsAppPrompt,
-                    onChanged: (val) => setState(() => _quickWhatsAppPrompt = val),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Device & System Settings
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'System & Permissions',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade700),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Card(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.phone_android),
-                    title: const Text('Call Tracking Permissions'),
-                    subtitle: const Text('Verify READ_PHONE_STATE & READ_CALL_LOG'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () async {
-                      final granted = await CallTrackingService.requestPermissions();
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              granted
-                                  ? 'All call tracking permissions are active!'
-                                  : 'Permissions need to be granted in system settings.',
-                            ),
-                          ),
-                        );
-                      }
-                    },
-                  ),
-                  const Divider(height: 1),
-                  const ListTile(
-                    leading: Icon(Icons.info_outline),
-                    title: Text('App Version'),
-                    subtitle: Text('CallNow 5.0 (Telecaller Desk Edition)'),
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.logout, color: Colors.red),
-                    title: const Text('Sign Out', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                    subtitle: const Text('Log out of this telecalling session'),
-                    onTap: () async {
-                      await ApiService.logout();
-                      if (context.mounted) {
-                        Navigator.pushReplacementNamed(context, '/login');
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-          ],
         ),
       ),
     );

@@ -31,18 +31,18 @@ class ConfigService {
   }
 
   static String get baseUrl {
-    if (!_initialized) {
-      return _defaultBaseUrl;
+    String url = (_initialized ? _cachedBaseUrl : _defaultBaseUrl).trim();
+    while (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
     }
-    print('[ConfigService] baseUrl: $_cachedBaseUrl');
-    return _cachedBaseUrl;
+    return url;
   }
 
   static Future<void> setBaseUrl(String url) async {
     final prefs = await SharedPreferences.getInstance();
     String normalizedUrl = url.trim();
-    if (!normalizedUrl.endsWith('/')) {
-      normalizedUrl = '$normalizedUrl/';
+    while (normalizedUrl.endsWith('/')) {
+      normalizedUrl = normalizedUrl.substring(0, normalizedUrl.length - 1);
     }
     await prefs.setString(_baseUrlKey, normalizedUrl);
     _cachedBaseUrl = normalizedUrl;
@@ -93,17 +93,81 @@ class ConfigService {
   static String get userEmail {
     final u = _cachedUserData;
     if (u == null) return '';
-    final email = u['email'] ?? (u['user'] is Map ? (u['user'] as Map)['email'] : null);
-    return email?.toString() ?? '';
+    const emailKeys = [
+      'email',
+      'user_email',
+      'email_address',
+      'email_id',
+      'work_email',
+      'mail',
+      'username',
+    ];
+    for (final k in emailKeys) {
+      if (u[k] != null) {
+        final val = u[k].toString().trim();
+        if (val.contains('@')) return val;
+      }
+      if (u['user'] is Map && (u['user'] as Map)[k] != null) {
+        final val = (u['user'] as Map)[k].toString().trim();
+        if (val.contains('@')) return val;
+      }
+      if (u['profile'] is Map && (u['profile'] as Map)[k] != null) {
+        final val = (u['profile'] as Map)[k].toString().trim();
+        if (val.contains('@')) return val;
+      }
+    }
+    // If username is an email
+    if (u['username'] != null && u['username'].toString().contains('@')) {
+      return u['username'].toString().trim();
+    }
+    return u['email']?.toString() ?? '';
   }
 
-  static Future<void> saveAuthData(String token, Map<String, dynamic> userData) async {
+  static String get userPhone {
+    final u = _cachedUserData;
+    if (u == null) return '';
+    const phoneKeys = [
+      'phone',
+      'mobile',
+      'phone_number',
+      'mobile_no',
+      'mobile_number',
+      'contact_number',
+      'contact_no',
+      'phone_no',
+      'contact',
+      'telephone',
+    ];
+    for (final k in phoneKeys) {
+      if (u[k] != null && u[k].toString().trim().isNotEmpty) {
+        return u[k].toString().trim();
+      }
+      if (u['user'] is Map && (u['user'] as Map)[k] != null) {
+        final val = (u['user'] as Map)[k].toString().trim();
+        if (val.isNotEmpty) return val;
+      }
+      if (u['profile'] is Map && (u['profile'] as Map)[k] != null) {
+        final val = (u['profile'] as Map)[k].toString().trim();
+        if (val.isNotEmpty) return val;
+      }
+    }
+    return '';
+  }
+
+  static Future<void> saveAuthData(String token, Map<String, dynamic> userData, {String? fallbackEmail}) async {
     final prefs = await SharedPreferences.getInstance();
-    // Normalize if nested under 'user'
+    // Normalize if nested under 'user' or 'profile'
     Map<String, dynamic> normalized = Map<String, dynamic>.from(userData);
     if (normalized.containsKey('user') && normalized['user'] is Map) {
       final nested = Map<String, dynamic>.from(normalized['user'] as Map);
       nested.forEach((k, v) => normalized.putIfAbsent(k, () => v));
+    }
+    if (normalized.containsKey('profile') && normalized['profile'] is Map) {
+      final nested = Map<String, dynamic>.from(normalized['profile'] as Map);
+      nested.forEach((k, v) => normalized.putIfAbsent(k, () => v));
+    }
+    if (fallbackEmail != null && fallbackEmail.trim().isNotEmpty && fallbackEmail.contains('@')) {
+      normalized.putIfAbsent('email', () => fallbackEmail.trim());
     }
     await prefs.setString(_tokenKey, token);
     await prefs.setString(_userDataKey, json.encode(normalized));

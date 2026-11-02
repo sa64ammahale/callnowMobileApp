@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:callnow_new/constants/lead_stages.dart';
+import 'package:callnow_new/model/crm_lead.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
+import 'package:callnow_new/services/followup_service.dart';
 
 class LeadsScreen extends StatefulWidget {
   final VoidCallback? onOpenCallingDesk;
@@ -18,11 +22,11 @@ class LeadsScreen extends StatefulWidget {
 
 class _LeadsScreenState extends State<LeadsScreen> {
   final TextEditingController _searchController = TextEditingController();
-  List<Map<String, dynamic>> _allLeads = [];
-  List<Map<String, dynamic>> _filteredLeads = [];
+  List<CrmLead> _allLeads = [];
+  List<CrmLead> _filteredLeads = [];
   bool _isLoading = true;
   String? _errorMessage;
-  String _activeFilter = 'all'; // 'all', 'not_called', 'called'
+  String _activeStageFilter = 'ALL'; // 'ALL' or stageKey ('LEAD', 'LOGIN', etc.)
 
   @override
   void initState() {
@@ -44,12 +48,14 @@ class _LeadsScreenState extends State<LeadsScreen> {
     });
 
     try {
-      // Dedicated CRM Leads section - strictly distinct from calling desk batch
       final res = await ApiService.getCreatedLeads(limit: 100, source: 'all');
       final raw = res['leads'];
-      List<Map<String, dynamic>> list = [];
+      List<CrmLead> list = [];
       if (raw is List) {
-        list = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+        list = raw
+            .whereType<Map>()
+            .map((e) => CrmLead.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
       }
 
       if (mounted) {
@@ -69,14 +75,479 @@ class _LeadsScreenState extends State<LeadsScreen> {
     }
   }
 
-  void _showAddLeadDialog() {
+  void _applyFilters() {
+    final query = _searchController.text.trim().toLowerCase();
+    setState(() {
+      _filteredLeads = _allLeads.where((lead) {
+        final matchesSearch = query.isEmpty ||
+            lead.name.toLowerCase().contains(query) ||
+            lead.mobile.contains(query) ||
+            lead.company.toLowerCase().contains(query) ||
+            lead.loanType.toLowerCase().contains(query) ||
+            (lead.loginBank ?? '').toLowerCase().contains(query) ||
+            lead.otherInfo.toLowerCase().contains(query);
+
+        if (!matchesSearch) return false;
+
+        if (_activeStageFilter == 'ALL') return true;
+        return lead.status == _activeStageFilter;
+      }).toList();
+    });
+  }
+
+  int _getStageCount(String stageKey) {
+    if (stageKey == 'ALL') return _allLeads.length;
+    return _allLeads.where((l) => l.status == stageKey).length;
+  }
+
+  Future<void> _makeCall(CrmLead lead) async {
+    final cleanPhone = lead.cleanMobile;
+    try {
+      await CallTrackingService.makePhoneCall(cleanPhone);
+    } catch (_) {
+      final uri = Uri.parse('tel:$cleanPhone');
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      }
+    }
+  }
+
+  Future<void> _openWhatsApp(CrmLead lead) async {
+    final cleanPhone = lead.cleanMobile;
+    final msg =
+        'Hello ${lead.name}, I am following up from InCredit Solutions regarding your ${lead.loanType} enquiry.';
+    await CallTrackingService.openWhatsApp(cleanPhone, message: msg);
+  }
+
+  void _showAdvanceStageModal(CrmLead lead) {
+    String selectedStage = lead.status;
+    final remarksCtrl = TextEditingController(text: lead.otherInfo);
+    bool isSaving = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                top: 20,
+                left: 20,
+                right: 20,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Advance Lead Pipeline Stage',
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF0F172A),
+                                ),
+                              ),
+                              Text(
+                                '${lead.name} • ${lead.formattedPackage}',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Color(0xFF64748B),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+
+                    // Current Stage Pill
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: LeadStageHelper.getColor(lead.status)
+                            .withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: LeadStageHelper.getColor(lead.status)
+                                .withValues(alpha: 0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(LeadStageHelper.getIcon(lead.status),
+                              color: LeadStageHelper.getColor(lead.status),
+                              size: 18),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Current Stage: ${LeadStageHelper.getLabel(lead.status)}',
+                            style: TextStyle(
+                              color: LeadStageHelper.getColor(lead.status),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    const Text(
+                      'Select New Stage:',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF334155),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+
+                    // Stage Selection Grid
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: LeadStageHelper.stageKeys.map((key) {
+                        final isSelected = selectedStage == key;
+                        final color = LeadStageHelper.getColor(key);
+                        return ChoiceChip(
+                          avatar: Icon(
+                            LeadStageHelper.getIcon(key),
+                            size: 16,
+                            color: isSelected ? Colors.white : color,
+                          ),
+                          label: Text(LeadStageHelper.getLabel(key)),
+                          selected: isSelected,
+                          selectedColor: color,
+                          backgroundColor: Colors.white,
+                          side: BorderSide(
+                              color: isSelected ? color : const Color(0xFFCBD5E1)),
+                          labelStyle: TextStyle(
+                            fontSize: 12,
+                            fontWeight: isSelected
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                            color: isSelected ? Colors.white : const Color(0xFF0F172A),
+                          ),
+                          onSelected: (val) {
+                            if (val) {
+                              setModalState(() => selectedStage = key);
+                            }
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // Remarks Field
+                    TextField(
+                      controller: remarksCtrl,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'Stage Transition Remarks / Notes',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                        hintText: 'e.g. CIBIL score verified, file submitted to HDFC',
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+
+                    // Action Button
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: LeadStageHelper.getColor(selectedStage),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      onPressed: isSaving
+                          ? null
+                          : () async {
+                              setModalState(() => isSaving = true);
+                              try {
+                                await ApiService.updateLeadStage(
+                                  id: lead.id,
+                                  newStage: selectedStage,
+                                  remarks: remarksCtrl.text.trim(),
+                                );
+
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                await _fetchLeads();
+
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Stage updated to ${LeadStageHelper.getLabel(selectedStage)}!',
+                                      ),
+                                      backgroundColor:
+                                          LeadStageHelper.getColor(selectedStage),
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                setModalState(() => isSaving = false);
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(e.toString()),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                      child: isSaving
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text(
+                              'Advance to ${LeadStageHelper.getLabel(selectedStage)}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 15),
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showScheduleFollowupModal(CrmLead lead) {
+    DateTime scheduledTime = DateTime.now().add(const Duration(hours: 2));
+    final notesCtrl = TextEditingController(
+      text: 'Callback regarding ${lead.loanType}',
+    );
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                top: 20,
+                left: 20,
+                right: 20,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Schedule Follow-up: ${lead.name}',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: notesCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Follow-up Reason',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // Quick Preset Chips
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          ActionChip(
+                            label: const Text('+30m'),
+                            onPressed: () => setModalState(() {
+                              scheduledTime =
+                                  DateTime.now().add(const Duration(minutes: 30));
+                            }),
+                          ),
+                          const SizedBox(width: 6),
+                          ActionChip(
+                            label: const Text('+1 Hour'),
+                            onPressed: () => setModalState(() {
+                              scheduledTime =
+                                  DateTime.now().add(const Duration(hours: 1));
+                            }),
+                          ),
+                          const SizedBox(width: 6),
+                          ActionChip(
+                            label: const Text('+2 Hours'),
+                            onPressed: () => setModalState(() {
+                              scheduledTime =
+                                  DateTime.now().add(const Duration(hours: 2));
+                            }),
+                          ),
+                          const SizedBox(width: 6),
+                          ActionChip(
+                            label: const Text('Tomorrow 10 AM'),
+                            onPressed: () => setModalState(() {
+                              final tom =
+                                  DateTime.now().add(const Duration(days: 1));
+                              scheduledTime =
+                                  DateTime(tom.year, tom.month, tom.day, 10, 0);
+                            }),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Pick Custom Date/Time
+                    InkWell(
+                      onTap: () async {
+                        final now = DateTime.now();
+                        final d = await showDatePicker(
+                          context: context,
+                          initialDate: scheduledTime,
+                          firstDate: now,
+                          lastDate: now.add(const Duration(days: 90)),
+                        );
+                        if (d != null && context.mounted) {
+                          final t = await showTimePicker(
+                            context: context,
+                            initialTime: TimeOfDay.fromDateTime(scheduledTime),
+                          );
+                          if (t != null) {
+                            setModalState(() {
+                              scheduledTime = DateTime(
+                                  d.year, d.month, d.day, t.hour, t.minute);
+                            });
+                          }
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFCBD5E1)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '⏰ ${scheduledTime.day}/${scheduledTime.month}/${scheduledTime.year} at ${scheduledTime.hour.toString().padLeft(2, '0')}:${scheduledTime.minute.toString().padLeft(2, '0')}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF1E293B)),
+                            ),
+                            const Text(
+                              'Custom Time',
+                              style: TextStyle(
+                                  color: Color(0xFF2563EB),
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2563EB),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () async {
+                        await FollowupService.instance.addFollowup(
+                          customerName: lead.name,
+                          phoneNumber: lead.mobile,
+                          company: lead.company,
+                          scheduledTime: scheduledTime,
+                          notes: notesCtrl.text.trim(),
+                          leadId: lead.id,
+                        );
+
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Follow-up scheduled with alert!'),
+                              backgroundColor: Color(0xFF16A34A),
+                            ),
+                          );
+                        }
+                      },
+                      child: const Text('Save & Set Reminder',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 15)),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showAddLeadModal() {
     final formKey = GlobalKey<FormState>();
     final nameCtrl = TextEditingController();
     final mobileCtrl = TextEditingController();
     final companyCtrl = TextEditingController();
-    final pkgCtrl = TextEditingController();
-    final notesCtrl = TextEditingController();
-    String selectedSource = 'MAIN';
+    final amountCtrl = TextEditingController();
+    final salaryCtrl = TextEditingController();
+    final cityCtrl = TextEditingController();
+    final remarksCtrl = TextEditingController();
+
+    String selectedLoanType = LeadStageHelper.loanTypes.first;
+    String selectedStage = 'LEAD';
+    String selectedBank = LeadStageHelper.partnerBanks.first;
+    String selectedPriority = 'Medium';
+    String selectedTemp = 'Warm';
     bool isSubmitting = false;
 
     showModalBottomSheet(
@@ -100,153 +571,316 @@ class _LeadsScreenState extends State<LeadsScreen> {
                   key: formKey,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Center(
-                        child: Container(
-                          width: 40,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade400,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
+                      // Header
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text(
-                            'Create New Lead',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                          const Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Create CRM Lead',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF0F172A),
+                                ),
+                              ),
+                              Text(
+                                'Synchronized with TBL_LEADS & DND protection',
+                                style: TextStyle(
+                                    fontSize: 12, color: Color(0xFF64748B)),
+                              ),
+                            ],
                           ),
                           IconButton(
                             icon: const Icon(Icons.close),
-                            onPressed: () => Navigator.pop(ctx),
+                            onPressed: () => Navigator.pop(modalCtx),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 16),
+
+                      // Section 1: Contact Identity
+                      _buildFormSectionHeader('1. Contact Identity', Icons.person_outline),
+                      const SizedBox(height: 8),
                       TextFormField(
                         controller: nameCtrl,
                         decoration: const InputDecoration(
-                          labelText: 'Customer Name *',
-                          prefixIcon: Icon(Icons.person_outline),
+                          labelText: 'Customer Full Name *',
+                          prefixIcon: Icon(Icons.badge_outlined),
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),
-                        validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter customer name' : null,
+                        validator: (v) =>
+                            v == null || v.trim().isEmpty ? 'Name is required' : null,
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 10),
                       TextFormField(
                         controller: mobileCtrl,
                         keyboardType: TextInputType.phone,
                         maxLength: 10,
                         decoration: const InputDecoration(
-                          labelText: 'Mobile Number *',
+                          labelText: '10-Digit Mobile Number *',
                           prefixIcon: Icon(Icons.phone_outlined),
+                          prefixText: '+91 ',
+                          counterText: '',
                           border: OutlineInputBorder(),
                           isDense: true,
-                          counterText: '',
                         ),
                         validator: (v) {
-                          if (v == null || v.trim().isEmpty) return 'Please enter mobile number';
-                          final clean = v.replaceAll(RegExp(r'[^0-9]'), '');
-                          if (clean.length < 10) return 'Enter a valid 10-digit mobile number';
+                          if (v == null || v.trim().isEmpty) return 'Mobile is required';
+                          final clean = v.replaceAll(RegExp(r'\D'), '');
+                          if (clean.length != 10) return 'Must be a 10-digit number';
                           return null;
                         },
                       ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: companyCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Company Name',
-                          prefixIcon: Icon(Icons.business_outlined),
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: pkgCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Loan Amount / Package',
-                          prefixIcon: Icon(Icons.currency_rupee),
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: notesCtrl,
-                        maxLines: 2,
-                        decoration: const InputDecoration(
-                          labelText: 'Other Info / Notes',
-                          prefixIcon: Icon(Icons.notes_outlined),
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                        ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: companyCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Employer / Company',
+                                prefixIcon: Icon(Icons.business_outlined),
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextFormField(
+                              controller: cityCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'City / Location',
+                                prefixIcon: Icon(Icons.location_on_outlined),
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 16),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: FilledButton.icon(
-                          onPressed: isSubmitting
-                              ? null
-                              : () async {
-                                  if (!formKey.currentState!.validate()) return;
-                                  setModalState(() => isSubmitting = true);
-                                  try {
-                                    await ApiService.createLead(
-                                      name: nameCtrl.text.trim(),
-                                      mobile: mobileCtrl.text.trim(),
-                                      company: companyCtrl.text.trim(),
-                                      package: pkgCtrl.text.trim(),
-                                      otherInfo: notesCtrl.text.trim(),
-                                      source: selectedSource,
-                                    );
-                                    if (ctx.mounted) {
-                                      Navigator.pop(ctx);
-                                    }
-                                    if (mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Lead created successfully!'),
-                                          backgroundColor: Colors.green,
-                                        ),
-                                      );
-                                      _fetchLeads();
-                                    }
-                                  } catch (err) {
-                                    setModalState(() => isSubmitting = false);
-                                    if (mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text(err.toString().replaceAll('Exception: ', '')),
-                                          backgroundColor: Colors.red.shade800,
-                                        ),
-                                      );
-                                    }
-                                  }
-                                },
-                          icon: isSubmitting
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                                )
-                              : const Icon(Icons.save),
-                          label: Text(
-                            isSubmitting ? 'Creating Lead...' : 'Save & Add Lead',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
+
+                      // Section 2: Loan & Financials
+                      _buildFormSectionHeader('2. Loan & Financials', Icons.currency_rupee),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedLoanType,
+                        decoration: const InputDecoration(
+                          labelText: 'Loan Type',
+                          prefixIcon: Icon(Icons.category_outlined),
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        items: LeadStageHelper.loanTypes.map((t) {
+                          return DropdownMenuItem(value: t, child: Text(t));
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) setModalState(() => selectedLoanType = val);
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: amountCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Required Loan Amount',
+                                prefixText: '₹ ',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                            ),
                           ),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Colors.blue.shade700,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextFormField(
+                              controller: salaryCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Net Monthly Salary',
+                                prefixText: '₹ ',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Section 3: Pipeline & Sourcing
+                      _buildFormSectionHeader('3. Pipeline & Sourcing', Icons.timeline),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              initialValue: selectedStage,
+                              decoration: const InputDecoration(
+                                labelText: 'Initial Stage',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: LeadStageHelper.stageKeys.map((k) {
+                                return DropdownMenuItem(
+                                  value: k,
+                                  child: Text(LeadStageHelper.getLabel(k)),
+                                );
+                              }).toList(),
+                              onChanged: (val) {
+                                if (val != null) setModalState(() => selectedStage = val);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              initialValue: selectedBank,
+                              decoration: const InputDecoration(
+                                labelText: 'Target Bank',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: LeadStageHelper.partnerBanks.map((b) {
+                                return DropdownMenuItem(
+                                  value: b,
+                                  child: Text(b, overflow: TextOverflow.ellipsis),
+                                );
+                              }).toList(),
+                              onChanged: (val) {
+                                if (val != null) setModalState(() => selectedBank = val);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              initialValue: selectedPriority,
+                              decoration: const InputDecoration(
+                                labelText: 'Priority',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: LeadStageHelper.priorities.map((p) {
+                                return DropdownMenuItem(value: p, child: Text(p));
+                              }).toList(),
+                              onChanged: (val) {
+                                if (val != null) setModalState(() => selectedPriority = val);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              initialValue: selectedTemp,
+                              decoration: const InputDecoration(
+                                labelText: 'Temperature',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: LeadStageHelper.temperatures.map((t) {
+                                return DropdownMenuItem(value: t, child: Text(t));
+                              }).toList(),
+                              onChanged: (val) {
+                                if (val != null) setModalState(() => selectedTemp = val);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: remarksCtrl,
+                        maxLines: 2,
+                        decoration: const InputDecoration(
+                          labelText: 'Notes / Remarks',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+
+                      // Submit Button
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2563EB),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
                           ),
                         ),
+                        onPressed: isSubmitting
+                            ? null
+                            : () async {
+                                if (!formKey.currentState!.validate()) return;
+                                setModalState(() => isSubmitting = true);
+
+                                try {
+                                  await ApiService.createLead(
+                                    name: nameCtrl.text.trim(),
+                                    mobile: mobileCtrl.text.trim(),
+                                    company: companyCtrl.text.trim(),
+                                    package: amountCtrl.text.trim(),
+                                    otherInfo: remarksCtrl.text.trim(),
+                                    status: selectedStage,
+                                    loanType: selectedLoanType,
+                                    stage: selectedTemp,
+                                    priority: selectedPriority,
+                                    loginBank: selectedBank,
+                                    source: 'MAIN',
+                                  );
+
+                                  if (modalCtx.mounted) Navigator.pop(modalCtx);
+                                  await _fetchLeads();
+
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Lead created & added to CRM queue!'),
+                                        backgroundColor: Color(0xFF16A34A),
+                                      ),
+                                    );
+                                  }
+                                } catch (e) {
+                                  setModalState(() => isSubmitting = false);
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(e.toString()),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                        child: isSubmitting
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text(
+                                'Create & Sync Lead',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 15),
+                              ),
                       ),
                     ],
                   ),
@@ -259,345 +893,170 @@ class _LeadsScreenState extends State<LeadsScreen> {
     );
   }
 
-  void _applyFilters() {
-    final query = _searchController.text.trim().toLowerCase();
-    setState(() {
-      _filteredLeads = _allLeads.where((lead) {
-        final name = (lead['name'] ?? lead['customer_name'] ?? '').toString().toLowerCase();
-        final mobile = (lead['mobile'] ?? lead['customer_mobile'] ?? '').toString();
-        final company = (lead['company'] ?? lead['customer_company'] ?? '').toString().toLowerCase();
-        final lastStatus = (lead['last_status'] ?? '').toString().toLowerCase();
-
-        final matchesSearch = query.isEmpty ||
-            name.contains(query) ||
-            mobile.contains(query) ||
-            company.contains(query);
-
-        if (!matchesSearch) return false;
-
-        if (_activeFilter == 'not_called') {
-          return lastStatus == 'not called' || lastStatus.isEmpty;
-        } else if (_activeFilter == 'called') {
-          return lastStatus.isNotEmpty && lastStatus != 'not called';
-        }
-        return true;
-      }).toList();
-    });
-  }
-
-  Future<void> _callLead(Map<String, dynamic> lead) async {
-    final mobile = (lead['mobile'] ?? lead['customer_mobile'] ?? '').toString();
-    if (mobile.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No mobile number available for this contact.')),
-      );
-      return;
-    }
-
-    if (widget.onLeadCallRequested != null) {
-      widget.onLeadCallRequested!(lead);
-    } else {
-      await CallTrackingService.makePhoneCall(mobile);
-      if (widget.onOpenCallingDesk != null) {
-        widget.onOpenCallingDesk!();
-      }
-    }
-  }
-
-  Future<void> _messageWhatsApp(Map<String, dynamic> lead) async {
-    final mobile = (lead['mobile'] ?? lead['customer_mobile'] ?? '').toString();
-    final name = (lead['name'] ?? lead['customer_name'] ?? 'Sir/Madam').toString();
-    if (mobile.isEmpty) return;
-
-    final msg = 'Hello $name, I am connecting with you regarding your enquiry with InCredit Solutions.';
-    await CallTrackingService.openWhatsApp(mobile, message: msg);
-  }
-
-  void _showLeadDetails(Map<String, dynamic> lead) {
-    final name = (lead['name'] ?? lead['customer_name'] ?? 'Lead Details').toString();
-    final mobile = (lead['mobile'] ?? lead['customer_mobile'] ?? 'N/A').toString();
-    final company = (lead['company'] ?? lead['customer_company'] ?? 'Individual').toString();
-    final pkg = (lead['package'] ?? lead['customer_package'] ?? 'General Enquiry').toString();
-    final otherInfo = (lead['other_info'] ?? '').toString();
-    final status = (lead['last_status'] ?? 'Not Called').toString();
-    final uploadTime = (lead['upload_time'] ?? '').toString();
-    final source = (lead['source'] ?? 'TEMPORARY').toString().toUpperCase();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            top: 20,
-            left: 20,
-            right: 20,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+  Widget _buildFormSectionHeader(String title, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: const Color(0xFF2563EB)),
+        const SizedBox(width: 6),
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1E293B),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade400,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Text(
-                      name,
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      source,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                company,
-                style: const TextStyle(fontSize: 14, color: Colors.grey),
-              ),
-              const SizedBox(height: 16),
-              const Divider(),
-              _detailRow(Icons.phone, 'Mobile', mobile),
-              _detailRow(Icons.currency_rupee, 'Package / Loan Amount', pkg),
-              if (otherInfo.isNotEmpty) _detailRow(Icons.info_outline, 'Other Info', otherInfo),
-              _detailRow(Icons.flag_outlined, 'Status', status),
-              if (uploadTime.isNotEmpty) _detailRow(Icons.calendar_today_outlined, 'Assigned On', uploadTime),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        _messageWhatsApp(lead);
-                      },
-                      icon: const Icon(Icons.chat, color: Colors.green),
-                      label: const Text('WhatsApp', style: TextStyle(color: Colors.green)),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        side: const BorderSide(color: Colors.green),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        _callLead(lead);
-                      },
-                      icon: const Icon(Icons.phone),
-                      label: const Text('Call Now'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.green.shade700,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _detailRow(IconData icon, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 18, color: Colors.grey.shade600),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: 130,
-            child: Text(
-              label,
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final notCalledCount = _allLeads.where((l) => (l['last_status'] ?? '').toString().toLowerCase() == 'not called').length;
-
     return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddLeadDialog,
-        icon: const Icon(Icons.person_add_alt_1),
-        label: const Text('Add Lead', style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.blue.shade700,
-        foregroundColor: Colors.white,
-      ),
       body: RefreshIndicator(
         onRefresh: _fetchLeads,
         child: Column(
           children: [
-            // Header stats card
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Colors.blue.shade800, Colors.indigo.shade900],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(14),
-                ),
+            // Top Stage Filter Carousel
+            Container(
+              color: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    _buildStatCol(
-                      'CRM Leads',
-                      _allLeads.length.toString(),
-                      Colors.white,
-                      onTap: () {
-                        setState(() => _activeFilter = 'all');
-                        _applyFilters();
-                      },
+                    _buildStageCarouselChip(
+                      key: 'ALL',
+                      label: 'All Leads',
+                      count: _getStageCount('ALL'),
+                      icon: Icons.all_inbox_rounded,
+                      color: const Color(0xFF2563EB),
                     ),
-                    Container(height: 32, width: 1, color: Colors.white24),
-                    _buildStatCol(
-                      'Not Called',
-                      notCalledCount.toString(),
-                      Colors.orangeAccent,
-                      onTap: () {
-                        setState(() => _activeFilter = 'not_called');
-                        _applyFilters();
-                      },
-                    ),
-                    Container(height: 32, width: 1, color: Colors.white24),
-                    _buildStatCol(
-                      'Showing',
-                      _filteredLeads.length.toString(),
-                      Colors.lightGreenAccent,
-                      onTap: () {
-                        setState(() => _activeFilter = 'all');
-                        _applyFilters();
-                      },
-                    ),
+                    const SizedBox(width: 8),
+                    ...LeadStageHelper.stageKeys.map((stageKey) {
+                      final count = _getStageCount(stageKey);
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _buildStageCarouselChip(
+                          key: stageKey,
+                          label: LeadStageHelper.getShortLabel(stageKey),
+                          count: count,
+                          icon: LeadStageHelper.getIcon(stageKey),
+                          color: LeadStageHelper.getColor(stageKey),
+                        ),
+                      );
+                    }),
                   ],
                 ),
               ),
             ),
+            const Divider(height: 1),
 
-            // Search bar
+            // Search Bar
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-              child: TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: 'Search leads by name, phone or company...',
-                  prefixIcon: const Icon(Icons.search, size: 20),
-                  suffixIcon: _searchController.text.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear, size: 18),
-                          onPressed: () {
-                            _searchController.clear();
-                          },
-                        )
-                      : null,
-                  filled: true,
-                  fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+              child: SizedBox(
+                height: 40,
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Search leads by name, mobile, loan type, company...',
+                    hintStyle: const TextStyle(fontSize: 13),
+                    prefixIcon: const Icon(Icons.search, size: 18),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 16),
+                            onPressed: () => _searchController.clear(),
+                          )
+                        : null,
+                    contentPadding: EdgeInsets.zero,
+                    filled: true,
+                    fillColor: const Color(0xFFF1F5F9),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
                 ),
               ),
             ),
 
-            // Filter chips
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-              child: Row(
-                children: [
-                  _filterChip('all', 'All Leads (${_allLeads.length})'),
-                  const SizedBox(width: 8),
-                  _filterChip('not_called', 'Not Called ($notCalledCount)'),
-                  const SizedBox(width: 8),
-                  _filterChip('called', 'Called (${_allLeads.length - notCalledCount})'),
-                ],
-              ),
-            ),
-            const Divider(height: 16),
-
-            // Leads List / State
+            // Lead List
             Expanded(
-              child: _buildBody(colorScheme),
+              child: _buildBody(),
             ),
           ],
         ),
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showAddLeadModal,
+        backgroundColor: const Color(0xFF2563EB),
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.person_add_alt_1),
+        label: const Text('Add Lead'),
+      ),
     );
   }
 
-  Widget _buildStatCol(String label, String value, Color valueColor, {VoidCallback? onTap}) {
+  Widget _buildStageCarouselChip({
+    required String key,
+    required String label,
+    required int count,
+    required IconData icon,
+    required Color color,
+  }) {
+    final isSelected = _activeStageFilter == key;
     return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        child: Column(
+      onTap: () {
+        setState(() => _activeStageFilter = key);
+        _applyFilters();
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? color : color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? color : color.withValues(alpha: 0.25),
+            width: isSelected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: valueColor,
-              ),
+            Icon(
+              icon,
+              size: 14,
+              color: isSelected ? Colors.white : color,
             ),
+            const SizedBox(width: 6),
             Text(
               label,
-              style: const TextStyle(fontSize: 11, color: Colors.white70),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                color: isSelected ? Colors.white : const Color(0xFF1E293B),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? Colors.white.withValues(alpha: 0.25)
+                    : color.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$count',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: isSelected ? Colors.white : color,
+                ),
+              ),
             ),
           ],
         ),
@@ -605,21 +1064,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
     );
   }
 
-  Widget _filterChip(String id, String label) {
-    final isSelected = _activeFilter == id;
-    return ChoiceChip(
-      label: Text(label, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-      selected: isSelected,
-      onSelected: (selected) {
-        if (selected) {
-          setState(() => _activeFilter = id);
-          _applyFilters();
-        }
-      },
-    );
-  }
-
-  Widget _buildBody(ColorScheme colorScheme) {
+  Widget _buildBody() {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -629,20 +1074,20 @@ class _LeadsScreenState extends State<LeadsScreen> {
         child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(Icons.error_outline, size: 48, color: Colors.red),
               const SizedBox(height: 12),
               Text(
-                'Failed to load leads: $_errorMessage',
+                _errorMessage!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.red),
+                style: const TextStyle(color: Colors.red, fontSize: 14),
               ),
               const SizedBox(height: 16),
               ElevatedButton.icon(
                 onPressed: _fetchLeads,
                 icon: const Icon(Icons.refresh),
-                label: const Text('Retry'),
+                label: const Text('Try Again'),
               ),
             ],
           ),
@@ -651,44 +1096,22 @@ class _LeadsScreenState extends State<LeadsScreen> {
     }
 
     if (_filteredLeads.isEmpty) {
-      final bool hasQuery = _searchController.text.isNotEmpty || _activeFilter != 'all';
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.person_search_outlined, size: 54, color: Colors.grey.shade400),
+              Icon(Icons.person_search_outlined,
+                  size: 48, color: Colors.grey.shade400),
               const SizedBox(height: 12),
               Text(
-                hasQuery
-                    ? 'No leads found matching criteria'
-                    : 'No CRM leads found matching criteria.',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                _searchController.text.isNotEmpty || _activeStageFilter != 'ALL'
+                    ? 'No leads matching the selected filter/search.'
+                    : 'No leads found in CRM.\nTap "+ Add Lead" to create a new client.',
                 textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: Color(0xFF64748B)),
               ),
-              const SizedBox(height: 6),
-              Text(
-                hasQuery
-                    ? 'Try clearing the search query or active filter.'
-                    : "Tap '+ Add Lead' to create your first lead.",
-                style: const TextStyle(fontSize: 13, color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
-              if (!hasQuery) ...[
-                const SizedBox(height: 18),
-                ElevatedButton.icon(
-                  onPressed: _showAddLeadDialog,
-                  icon: const Icon(Icons.person_add_alt_1),
-                  label: const Text('+ Add Lead'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue.shade700,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                ),
-              ],
             ],
           ),
         ),
@@ -696,162 +1119,333 @@ class _LeadsScreenState extends State<LeadsScreen> {
     }
 
     return ListView.builder(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 80),
       itemCount: _filteredLeads.length,
       itemBuilder: (context, index) {
         final lead = _filteredLeads[index];
-        return _buildLeadCard(context, lead, colorScheme);
+        return _buildLeadCard(lead);
       },
     );
   }
 
-  Widget _buildLeadCard(BuildContext context, Map<String, dynamic> lead, ColorScheme colorScheme) {
-    final name = (lead['name'] ?? lead['customer_name'] ?? 'Unnamed Lead').toString();
-    final mobile = (lead['mobile'] ?? lead['customer_mobile'] ?? '').toString();
-    final company = (lead['company'] ?? lead['customer_company'] ?? '').toString();
-    final pkg = (lead['package'] ?? lead['customer_package'] ?? '').toString();
-    final lastStatus = (lead['last_status'] ?? 'Not Called').toString();
-    final isNotCalled = lastStatus.toLowerCase() == 'not called';
+  Widget _buildLeadCard(CrmLead lead) {
+    final stageColor = LeadStageHelper.getColor(lead.status);
+    final stageLabel = LeadStageHelper.getLabel(lead.status);
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      elevation: 1.5,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => _showLeadDetails(lead),
-        child: Padding(
-          padding: const EdgeInsets.all(14.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Lead Name & Status Badge
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundColor: isNotCalled
-                        ? Colors.blue.withValues(alpha: 0.15)
-                        : Colors.green.withValues(alpha: 0.15),
-                    child: Text(
-                      name.isNotEmpty ? name[0].toUpperCase() : 'L',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: isNotCalled ? Colors.blue.shade800 : Colors.green.shade800,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          name,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        if (company.isNotEmpty)
-                          Text(
-                            company,
-                            style: const TextStyle(fontSize: 12, color: Colors.grey),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: isNotCalled ? Colors.orange.shade50 : Colors.green.shade50,
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: isNotCalled ? Colors.orange.shade300 : Colors.green.shade300,
-                        width: 0.8,
-                      ),
-                    ),
-                    child: Text(
-                      lastStatus,
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: isNotCalled ? Colors.orange.shade900 : Colors.green.shade900,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-
-              // Phone & Package details row
-              Row(
-                children: [
-                  Icon(Icons.phone_outlined, size: 14, color: Colors.grey.shade600),
-                  const SizedBox(width: 4),
-                  Text(
-                    mobile,
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: const Color(0xFFE2E8F0)),
+      ),
+      color: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Top Row: Avatar + Name + Company & Status Badge
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  backgroundColor: stageColor.withValues(alpha: 0.15),
+                  radius: 20,
+                  child: Text(
+                    lead.name.isNotEmpty ? lead.name[0].toUpperCase() : '?',
                     style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade800,
+                      fontWeight: FontWeight.bold,
+                      color: stageColor,
+                      fontSize: 16,
                     ),
                   ),
-                  if (pkg.isNotEmpty) ...[
-                    const SizedBox(width: 14),
-                    Icon(Icons.currency_rupee, size: 14, color: Colors.grey.shade600),
-                    const SizedBox(width: 2),
-                    Expanded(
-                      child: Text(
-                        pkg,
-                        style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        lead.name,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F172A),
+                        ),
                       ),
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Divider(height: 1),
-              const SizedBox(height: 8),
+                      if (lead.company.isNotEmpty)
+                        Text(
+                          lead.company,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF475569),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                // Status Badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: stageColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: stageColor.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(LeadStageHelper.getIcon(lead.status),
+                          size: 13, color: stageColor),
+                      const SizedBox(width: 4),
+                      Text(
+                        stageLabel,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: stageColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
 
-              // Quick Actions
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+            // Journey Progress Stepper
+            _buildJourneyStepper(lead),
+            const SizedBox(height: 10),
+
+            // Financial Pill
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Row(
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: () => _messageWhatsApp(lead),
-                    icon: const Icon(Icons.chat, size: 16, color: Colors.green),
-                    label: const Text('WhatsApp', style: TextStyle(fontSize: 12, color: Colors.green)),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      side: const BorderSide(color: Colors.green, width: 0.8),
-                      visualDensity: VisualDensity.compact,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  const Icon(Icons.currency_rupee, size: 14, color: Color(0xFF16A34A)),
+                  Text(
+                    lead.formattedPackage,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      color: Color(0xFF0F172A),
                     ),
                   ),
                   const SizedBox(width: 8),
-                  FilledButton.icon(
-                    onPressed: () => _callLead(lead),
-                    icon: const Icon(Icons.phone_in_talk, size: 16),
-                    label: const Text('Call', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.green.shade700,
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                      visualDensity: VisualDensity.compact,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  Container(height: 12, width: 1, color: const Color(0xFFCBD5E1)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${lead.loanType}${lead.loginBank != null && lead.loginBank!.isNotEmpty ? " • ${lead.loginBank}" : ""}',
+                      style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
               ),
+            ),
+            const SizedBox(height: 8),
+
+            // Secondary Metadata (Temperature, Priority, Mobile)
+            Row(
+              children: [
+                // Phone
+                const Icon(Icons.phone, size: 13, color: Color(0xFF64748B)),
+                const SizedBox(width: 4),
+                Text(
+                  lead.mobile,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF334155),
+                  ),
+                ),
+                const Spacer(),
+                // Temperature Chip
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: LeadStageHelper.getTemperatureColor(lead.stage)
+                        .withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    lead.stage == 'Hot'
+                        ? '🔥 Hot'
+                        : (lead.stage == 'Warm' ? '⚡ Warm' : '❄️ Cold'),
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: LeadStageHelper.getTemperatureColor(lead.stage),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                // Priority Chip
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: LeadStageHelper.getPriorityColor(lead.priority)
+                        .withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${lead.priority} Prio',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: LeadStageHelper.getPriorityColor(lead.priority),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            if (lead.otherInfo.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                '“${lead.otherInfo}”',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                  color: Color(0xFF64748B),
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
             ],
-          ),
+
+            const SizedBox(height: 10),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
+
+            // Action Buttons Row
+            Row(
+              children: [
+                // Call Now
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => _makeCall(lead),
+                    icon: const Icon(Icons.phone, size: 15),
+                    label: const Text('Call', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF16A34A),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+
+                // WhatsApp
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.chat_bubble_outline, size: 15, color: Color(0xFF25D366)),
+                  tooltip: 'WhatsApp',
+                  onPressed: () => _openWhatsApp(lead),
+                  style: IconButton.styleFrom(
+                    backgroundColor: const Color(0xFFDCFCE7),
+                    padding: const EdgeInsets.all(8),
+                  ),
+                ),
+                const SizedBox(width: 6),
+
+                // Advance Stage
+                ElevatedButton.icon(
+                  onPressed: () => _showAdvanceStageModal(lead),
+                  icon: const Icon(Icons.swap_horiz, size: 15),
+                  label: const Text('Advance', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: stageColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    elevation: 0,
+                  ),
+                ),
+                const SizedBox(width: 6),
+
+                // Follow-up
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.alarm_add, size: 15, color: Color(0xFF2563EB)),
+                  tooltip: 'Schedule Callback',
+                  onPressed: () => _showScheduleFollowupModal(lead),
+                  style: IconButton.styleFrom(
+                    backgroundColor: const Color(0xFFEFF6FF),
+                    padding: const EdgeInsets.all(8),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
   }
-}
 
+  Widget _buildJourneyStepper(CrmLead lead) {
+    if (lead.isRejected) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFEF2F2),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFFFCA5A5)),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cancel, size: 13, color: Color(0xFFEF4444)),
+            SizedBox(width: 4),
+            Text(
+              'Application Closed / Lost',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final currentStep = lead.stepNumber; // 1 to 7
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Stage $currentStep of 7: ${LeadStageHelper.getLabel(lead.status)}',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: LeadStageHelper.getColor(lead.status),
+              ),
+            ),
+            Text(
+              '${((currentStep / 7) * 100).toInt()}% Complete',
+              style: const TextStyle(fontSize: 10, color: Color(0xFF64748B)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: currentStep / 7.0,
+            minHeight: 5,
+            backgroundColor: const Color(0xFFE2E8F0),
+            valueColor: AlwaysStoppedAnimation<Color>(LeadStageHelper.getColor(lead.status)),
+          ),
+        ),
+      ],
+    );
+  }
+}

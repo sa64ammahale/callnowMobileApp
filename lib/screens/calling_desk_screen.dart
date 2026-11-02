@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:callnow_new/constants/lead_stages.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
@@ -37,6 +39,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
   DateTime? _followupDateTime;
   bool _hasCallOccurred = false;
   bool _allowUnconnectedOverrideForShortCalls = false;
+  bool _isOtherInfoExpanded = false;
 
   bool get _isCallConnected => _durationSeconds > 0;
 
@@ -333,6 +336,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     _followupDateTime = null;
     _hasCallOccurred = false;
     _allowUnconnectedOverrideForShortCalls = false;
+    _isOtherInfoExpanded = false;
     _selectedDisposition = 'NOT_CONNECTED_BUSY';
     _verifiedCallLog = null;
     _isCheckingCallLog = false;
@@ -417,15 +421,38 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     });
   }
 
+  String _formatPackageAmount(String package) {
+    if (package.isEmpty) return '';
+    final cleaned = package.replaceAll(RegExp(r'[^\d.]'), '');
+    final numVal = double.tryParse(cleaned);
+    if (numVal != null && numVal > 0) {
+      if (numVal >= 10000000) {
+        return '₹${(numVal / 10000000).toStringAsFixed(2)} Cr';
+      } else if (numVal >= 100000) {
+        return '₹${(numVal / 100000).toStringAsFixed(2)} Lakh';
+      }
+      return '₹${numVal.toInt()}';
+    }
+    return package.startsWith('₹') ? package : '₹$package';
+  }
+
   Widget _buildPresetChip(String label, VoidCallback onTap) {
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: ActionChip(
-        label: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        label: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10.5,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF334155),
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
         visualDensity: VisualDensity.compact,
-        backgroundColor: Colors.white,
-        side: BorderSide(color: Colors.grey.shade300),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        backgroundColor: const Color(0xFFF8FAFC),
+        side: const BorderSide(color: Color(0xFFE2E8F0)),
         onPressed: onTap,
       ),
     );
@@ -640,30 +667,30 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         color: colorScheme.surface,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 8,
-            offset: const Offset(0, -3),
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 6,
+            offset: const Offset(0, -2),
           ),
         ],
       ),
       padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 8,
-        bottom: MediaQuery.of(context).padding.bottom + 8,
+        left: 14,
+        right: 14,
+        top: 6,
+        bottom: MediaQuery.of(context).padding.bottom + 6,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Call verification status bar
+          // Call verification status bar (Compact)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            margin: const EdgeInsets.only(bottom: 6),
             decoration: BoxDecoration(
               color: isDialed
                   ? Colors.green.withValues(alpha: 0.1)
                   : Colors.amber.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(6),
               border: Border.all(
                 color: isDialed ? Colors.green.shade300 : Colors.amber.shade300,
                 width: 1,
@@ -673,25 +700,25 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
               children: [
                 if (_isCheckingCallLog) ...[
                   const SizedBox(
-                    width: 12,
-                    height: 12,
+                    width: 11,
+                    height: 11,
                     child: CircularProgressIndicator(strokeWidth: 1.5),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   const Expanded(
                     child: Text(
                       'Verifying with Android call logs...',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                      style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600),
                     ),
                   ),
                 ] else if (isDialed) ...[
-                  const Icon(Icons.verified, size: 14, color: Colors.green),
-                  const SizedBox(width: 6),
+                  const Icon(Icons.verified, size: 13, color: Colors.green),
+                  const SizedBox(width: 5),
                   Expanded(
                     child: Text(
                       '✓ Call Log Verified: Dialed • ${_verifiedCallLog!.durationFormatted} talk time',
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.bold,
                         color: Colors.green.shade900,
                       ),
@@ -711,13 +738,13 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                       },
                       child: Row(
                         children: [
-                          Icon(Icons.lock_clock, size: 14, color: Colors.amber.shade900),
-                          const SizedBox(width: 6),
+                          Icon(Icons.lock_clock, size: 13, color: Colors.amber.shade900),
+                          const SizedBox(width: 5),
                           Expanded(
                             child: Text(
                               'Dial customer to unlock submit',
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 10.5,
                                 fontWeight: FontWeight.w600,
                                 color: Colors.amber.shade900,
                               ),
@@ -735,14 +762,15 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
             children: [
               OutlinedButton.icon(
                 onPressed: _isSubmitting ? null : _skipLead,
-                icon: const Icon(Icons.skip_next, size: 18),
-                label: const Text('Skip'),
+                icon: const Icon(Icons.skip_next, size: 16),
+                label: const Text('Skip', style: TextStyle(fontSize: 12.5)),
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  visualDensity: VisualDensity.compact,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: FilledButton.icon(
                   onPressed: _isSubmitting
@@ -750,30 +778,30 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                       : (isDialed
                           ? _submitAndNext
                           : () async {
-                              // Tapping locked button immediately queries call log in case user just hung up
                               await _verifyCallWithAndroidLog(showToast: true);
                             }),
                   icon: _isSubmitting
                       ? const SizedBox(
-                          width: 18,
-                          height: 18,
+                          width: 15,
+                          height: 15,
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                         )
                       : Icon(
                           isDialed ? Icons.check_circle_outline : Icons.lock_outline,
-                          size: 20,
+                          size: 17,
                         ),
                   label: Text(
                     _isSubmitting
                         ? 'Saving...'
                         : (isDialed ? 'Submit & Next Call' : 'Dial to Unlock Submit'),
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                   ),
                   style: FilledButton.styleFrom(
                     backgroundColor: isDialed ? Colors.green.shade700 : Colors.grey.shade400,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 9),
+                    visualDensity: VisualDensity.compact,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
                 ),
               ),
@@ -872,9 +900,18 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     final mobile = (lead['mobile'] ?? '').toString();
     final company = (lead['company'] ?? '').toString().trim();
     final pkg = (lead['package'] ?? '').toString().trim();
+    final formattedPkg = _formatPackageAmount(pkg);
+    final loanType = (lead['loan_type'] ?? '').toString().trim();
     final otherInfo = (lead['other_info'] ?? '').toString().trim();
     final callCount = int.tryParse(lead['call_count']?.toString() ?? '0') ?? 0;
     final lastStatus = (lead['last_status'] ?? '').toString().trim();
+
+    final statusKey = (lead['status'] ?? lead['lead_status_new'] ?? lead['last_status'] ?? 'LEAD').toString().trim();
+    final stageColor = LeadStageHelper.getColor(statusKey);
+    final stageLabel = LeadStageHelper.getLabel(statusKey);
+    final stageIcon = LeadStageHelper.getIcon(statusKey);
+    final leadStage = (lead['lead_stage'] ?? lead['stage'] ?? '').toString().trim();
+    final priority = (lead['priority'] ?? '').toString().trim();
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -888,35 +925,215 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         onRefresh: () => _loadInitialBatch(force: true),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+          padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Primary Contact Card
-              Card(
-            elevation: 3,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(18.0),
+              // 1. Queue Progress Card
+              _buildQueueProgressCard(),
+
+              // 2. Stage-Dynamic Primary Contact Card
+              _buildContactCard(
+                name: name,
+                mobile: mobile,
+                company: company,
+                pkg: pkg,
+                formattedPkg: formattedPkg,
+                loanType: loanType,
+                otherInfo: otherInfo,
+                callCount: callCount,
+                lastStatus: lastStatus,
+                statusKey: statusKey,
+                stageColor: stageColor,
+                stageLabel: stageLabel,
+                stageIcon: stageIcon,
+                leadStage: leadStage,
+                priority: priority,
+              ),
+              const SizedBox(height: 10),
+
+              // 3. Live Call Verification & Timing Tier Banner
+              _buildTimingTierBanner(),
+              const SizedBox(height: 10),
+
+              // 4. Structured Disposition & Outcome Card
+              _buildDispositionCard(),
+              const SizedBox(height: 10),
+
+              // 5. Callback & Follow-up Reminder Card
+              _buildFollowupCard(),
+              const SizedBox(height: 10),
+
+              // 6. Telecaller Remarks & Quick Notes Card
+              _buildRemarksCard(),
+              const SizedBox(height: 10),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 1. Queue Progress Card
+  Widget _buildQueueProgressCard() {
+    final total = _leads.length;
+    final current = _currentIndex + 1;
+    final progress = total > 0 ? (current / total).clamp(0.0, 1.0) : 0.0;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Icon(Icons.queue_rounded, size: 14, color: Color(0xFF2563EB)),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'Calling Desk Queue',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1E293B),
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2563EB),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  'Lead $current of $total',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              if (_isFetchingMore) ...[
+                const SizedBox(width: 6),
+                const SizedBox(
+                  width: 11,
+                  height: 11,
+                  child: CircularProgressIndicator(strokeWidth: 1.5, color: Color(0xFF2563EB)),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 7),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 4,
+              backgroundColor: const Color(0xFFF1F5F9),
+              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF2563EB)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 2. Primary Contact Card with Stage-Dynamic Coloring
+  Widget _buildContactCard({
+    required String name,
+    required String mobile,
+    required String company,
+    required String pkg,
+    required String formattedPkg,
+    required String loanType,
+    required String otherInfo,
+    required int callCount,
+    required String lastStatus,
+    required String statusKey,
+    required Color stageColor,
+    required String stageLabel,
+    required IconData stageIcon,
+    required String leadStage,
+    required String priority,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: stageColor.withValues(alpha: 0.32), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: stageColor.withValues(alpha: 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Top Accent Color Bar
+            Container(
+              height: 4.5,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [stageColor, stageColor.withValues(alpha: 0.6)],
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(14.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Top Row: Avatar + Name + Badges
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Stage-themed Avatar
                       CircleAvatar(
-                        radius: 26,
-                        backgroundColor: colorScheme.primaryContainer,
+                        radius: 21,
+                        backgroundColor: stageColor.withValues(alpha: 0.12),
                         child: Text(
                           name.isNotEmpty ? name[0].toUpperCase() : '?',
                           style: TextStyle(
-                            fontSize: 22,
+                            fontSize: 17,
                             fontWeight: FontWeight.bold,
-                            color: colorScheme.onPrimaryContainer,
+                            color: stageColor,
                           ),
                         ),
                       ),
-                      const SizedBox(width: 14),
+                      const SizedBox(width: 11),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -924,44 +1141,29 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                             Text(
                               name,
                               style: const TextStyle(
-                                fontSize: 19,
+                                fontSize: 16.5,
                                 fontWeight: FontWeight.bold,
+                                color: Color(0xFF0F172A),
                               ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
                             if (company.isNotEmpty && company != 'Individual') ...[
-                              const SizedBox(height: 3),
+                              const SizedBox(height: 2),
                               Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.business_rounded, size: 14, color: Colors.grey.shade600),
+                                  const Icon(Icons.business_rounded, size: 13, color: Color(0xFF64748B)),
                                   const SizedBox(width: 4),
                                   Expanded(
                                     child: Text(
                                       company,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: Colors.grey.shade700,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Color(0xFF475569),
                                         fontWeight: FontWeight.w500,
                                       ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                            if (pkg.isNotEmpty && pkg != 'General Enquiry') ...[
-                              const SizedBox(height: 3),
-                              Row(
-                                children: [
-                                  Icon(Icons.sell_outlined, size: 14, color: colorScheme.primary),
-                                  const SizedBox(width: 4),
-                                  Expanded(
-                                    child: Text(
-                                      pkg,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: colorScheme.primary,
-                                      ),
+                                      maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
@@ -971,94 +1173,270 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                           ],
                         ),
                       ),
+                      // Stage & Priority Badges Column
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                            decoration: BoxDecoration(
+                              color: stageColor.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: stageColor.withValues(alpha: 0.28)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(stageIcon, size: 12, color: stageColor),
+                                const SizedBox(width: 4),
+                                Text(
+                                  stageLabel,
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.bold,
+                                    color: stageColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (leadStage.isNotEmpty) ...[
+                            const SizedBox(height: 3),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                              decoration: BoxDecoration(
+                                color: LeadStageHelper.getTemperatureColor(leadStage).withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: LeadStageHelper.getTemperatureColor(leadStage).withValues(alpha: 0.25),
+                                ),
+                              ),
+                              child: Text(
+                                leadStage,
+                                style: TextStyle(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: LeadStageHelper.getTemperatureColor(leadStage),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
 
-                  // Phone Number Container (Number ID removed)
+                  // Metadata Pills Row (Loan Amount, Loan Type, Call count)
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 5,
+                    children: [
+                      // Formatted Loan Package Pill
+                      if (formattedPkg.isNotEmpty && formattedPkg != 'General Enquiry')
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFECFDF5),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFA7F3D0)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.payments_outlined, size: 13, color: Color(0xFF047857)),
+                              const SizedBox(width: 4),
+                              Text(
+                                formattedPkg,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF047857),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      // Loan Type Pill
+                      if (loanType.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEFF6FF),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFBFDBFE)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.account_balance_wallet_outlined, size: 12.5, color: Color(0xFF1D4ED8)),
+                              const SizedBox(width: 4),
+                              Text(
+                                loanType,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF1D4ED8),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      // Dialed count tag
+                      if (callCount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFCBD5E1)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.phone_forwarded_rounded, size: 12, color: Color(0xFF475569)),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Dialed $callCount time${callCount > 1 ? 's' : ''}',
+                                style: const TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF334155),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else if (lastStatus.isNotEmpty && lastStatus != 'Not Called')
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Text(
+                            lastStatus,
+                            style: const TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF475569),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Phone Number Container
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerLow,
-                      borderRadius: BorderRadius.circular(12),
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.phone_in_talk_rounded, size: 18, color: colorScheme.primary),
-                        const SizedBox(width: 10),
+                        Icon(Icons.phone_in_talk_rounded, size: 16, color: stageColor),
+                        const SizedBox(width: 8),
                         Text(
                           mobile,
                           style: const TextStyle(
-                            fontSize: 17,
+                            fontSize: 15.5,
                             fontWeight: FontWeight.bold,
-                            letterSpacing: 0.5,
+                            color: Color(0xFF0F172A),
+                            letterSpacing: 0.4,
                           ),
                         ),
                         const Spacer(),
-                        if (callCount > 0)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.blue.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              'Dialed $callCount time${callCount > 1 ? 's' : ''}',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue.shade800,
+                        InkWell(
+                          onTap: () {
+                            Clipboard.setData(ClipboardData(text: mobile));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Copied $mobile to clipboard'),
+                                duration: const Duration(seconds: 1),
+                                behavior: SnackBarBehavior.floating,
                               ),
-                            ),
-                          )
-                        else if (lastStatus.isNotEmpty && lastStatus != 'Not Called')
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.grey.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              lastStatus,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.black87,
-                              ),
-                            ),
+                            );
+                          },
+                          borderRadius: BorderRadius.circular(6),
+                          child: Padding(
+                            padding: const EdgeInsets.all(4.0),
+                            child: Icon(Icons.copy_rounded, size: 15, color: Colors.grey.shade600),
                           ),
+                        ),
                       ],
                     ),
                   ),
 
-                  // Other Information Banner (Notes, loan requirement, or extra details)
+                  // Other Information Banner (Warm note style)
                   if (otherInfo.isNotEmpty) ...[
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 9),
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
                       decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
-                          width: 1,
+                        color: const Color(0xFFFFFBEB),
+                        borderRadius: const BorderRadius.only(
+                          topRight: Radius.circular(8),
+                          bottomRight: Radius.circular(8),
+                          topLeft: Radius.circular(3),
+                          bottomLeft: Radius.circular(3),
+                        ),
+                        border: const Border(
+                          left: BorderSide(color: Color(0xFFF59E0B), width: 3.5),
+                          top: BorderSide(color: Color(0xFFFEF3C7)),
+                          right: BorderSide(color: Color(0xFFFEF3C7)),
+                          bottom: BorderSide(color: Color(0xFFFEF3C7)),
                         ),
                       ),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.notes_rounded, size: 16, color: colorScheme.primary),
-                          const SizedBox(width: 8),
+                          const Icon(Icons.assignment_outlined, size: 14, color: Color(0xFFD97706)),
+                          const SizedBox(width: 7),
                           Expanded(
-                            child: Text(
-                              otherInfo,
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                height: 1.35,
-                                color: colorScheme.onSurfaceVariant,
-                                fontWeight: FontWeight.w500,
+                            child: RichText(
+                              text: TextSpan(
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  height: 1.35,
+                                  color: Color(0xFF78350F),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                children: [
+                                  TextSpan(
+                                    text: (!(_isOtherInfoExpanded) && otherInfo.length > 90)
+                                        ? '${otherInfo.substring(0, 90)}...'
+                                        : otherInfo,
+                                  ),
+                                  if (otherInfo.length > 90) ...[
+                                    const TextSpan(text: ' '),
+                                    WidgetSpan(
+                                      alignment: PlaceholderAlignment.middle,
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          setState(() {
+                                            _isOtherInfoExpanded = !_isOtherInfoExpanded;
+                                          });
+                                        },
+                                        child: Text(
+                                          _isOtherInfoExpanded ? 'Show Less' : 'Read More',
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: Color(0xFFB45309),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                             ),
                           ),
@@ -1066,7 +1444,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                       ),
                     ),
                   ],
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
 
                   // Call & WhatsApp Action Buttons
                   Row(
@@ -1075,15 +1453,19 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                         flex: 3,
                         child: FilledButton.icon(
                           onPressed: _callCurrentLead,
-                          icon: const Icon(Icons.call_rounded),
+                          icon: const Icon(Icons.call_rounded, size: 18),
                           label: const Text(
                             'Call Now',
-                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                           ),
                           style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            backgroundColor: const Color(0xFF2563EB),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 11),
+                            visualDensity: VisualDensity.compact,
+                            elevation: 1,
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(10),
                             ),
                           ),
                         ),
@@ -1093,155 +1475,214 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                         flex: 2,
                         child: OutlinedButton.icon(
                           onPressed: _whatsappCurrentLead,
-                          icon: const Icon(Icons.chat_bubble_outline, color: Colors.green),
-                          label: const Text('WhatsApp', style: TextStyle(color: Colors.green)),
+                          icon: const Icon(Icons.chat_bubble_outline, color: Color(0xFF16A34A), size: 18),
+                          label: const Text(
+                            'WhatsApp',
+                            style: TextStyle(color: Color(0xFF16A34A), fontSize: 13.5, fontWeight: FontWeight.w600),
+                          ),
                           style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            side: const BorderSide(color: Colors.green),
+                            padding: const EdgeInsets.symmetric(vertical: 11),
+                            visualDensity: VisualDensity.compact,
+                            side: const BorderSide(color: Color(0xFF16A34A), width: 1.2),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(10),
                             ),
                           ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
                 ],
               ),
             ),
-          ),
-          const SizedBox(height: 14),
+          ],
+        ),
+      ),
+    );
+  }
 
-          // Unified Call Verification & Timing Card (Properly colored based on tier)
-          Card(
-            elevation: 2,
+  /// 3. Call Verification & Timing Tier Banner
+  Widget _buildTimingTierBanner() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
             color: _getTimingTierBgColor(),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: _getTimingTierBorderColor(), width: 1.2),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(14.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: _getTimingTierIconBgColor(),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Icon(_getTimingTierIcon(), color: _getTimingTierTextColor(), size: 22),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _getTimingTierTitle(),
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: _getTimingTierTextColor(),
-                                fontSize: 14,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _verifiedCallLog?.isDialed == true
-                                  ? 'Android Call Log: ${_verifiedCallLog!.durationFormatted} talk time'
-                                  : 'Call not dialed yet (0s)',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: _getTimingTierTextColor().withValues(alpha: 0.8),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // Integrated Fetch Status from Call History Button
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _isCheckingCallLog
-                          ? null
-                          : () => _verifyCallWithAndroidLog(showToast: true),
-                      icon: _isCheckingCallLog
-                          ? const SizedBox(
-                              width: 15,
-                              height: 15,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : Icon(
-                              _verifiedCallLog?.isDialed == true
-                                  ? Icons.check_circle_rounded
-                                  : Icons.sync_rounded,
-                              size: 17,
-                              color: Colors.white,
-                            ),
-                      label: Text(
-                        _isCheckingCallLog
-                            ? 'Checking Call History...'
-                            : (_verifiedCallLog?.isDialed == true
-                                ? 'Status Verified (${_verifiedCallLog!.durationFormatted}) • Tap to Refresh'
-                                : 'Fetch Status from Call History'),
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
-                      ),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _getTimingTierButtonBgColor(),
-                        padding: const EdgeInsets.symmetric(vertical: 11),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _getTimingTierBorderColor(), width: 1.2),
           ),
-          const SizedBox(height: 14),
-
-          // Conditional Disposition Selection Header (Strictly locked to Not Connected when 0s duration)
-          Row(
+          child: Row(
             children: [
+              Container(
+                padding: const EdgeInsets.all(5),
+                decoration: BoxDecoration(
+                  color: _getTimingTierIconBgColor(),
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Icon(_getTimingTierIcon(), color: _getTimingTierTextColor(), size: 18),
+              ),
+              const SizedBox(width: 9),
               Expanded(
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      (_isCallConnected && !_allowUnconnectedOverrideForShortCalls)
-                          ? Icons.phone_in_talk_rounded
-                          : Icons.phone_missed_rounded,
-                      size: 18,
-                      color: (_isCallConnected && !_allowUnconnectedOverrideForShortCalls)
-                          ? Colors.green
-                          : Colors.amber.shade900,
+                    Text(
+                      _getTimingTierTitle(),
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: _getTimingTierTextColor(),
+                        fontSize: 12.5,
+                      ),
                     ),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        (_isCallConnected && !_allowUnconnectedOverrideForShortCalls)
-                            ? 'Connected Outcomes'
-                            : 'Not Connected Outcomes',
-                        style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      _verifiedCallLog?.isDialed == true
+                          ? 'Android Log: ${_verifiedCallLog!.durationFormatted} talk time'
+                          : 'Call not dialed yet (0s)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: _getTimingTierTextColor().withValues(alpha: 0.85),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 6),
-              if (_isCallConnected)
-                TextButton.icon(
-                  style: TextButton.styleFrom(
+              InkWell(
+                onTap: _isCheckingCallLog ? null : () => _verifyCallWithAndroidLog(showToast: true),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: _getTimingTierButtonBgColor(),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_isCheckingCallLog)
+                        const SizedBox(
+                          width: 11,
+                          height: 11,
+                          child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.white),
+                        )
+                      else
+                        Icon(
+                          _verifiedCallLog?.isDialed == true ? Icons.check_circle_rounded : Icons.sync_rounded,
+                          size: 13,
+                          color: Colors.white,
+                        ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _isCheckingCallLog
+                            ? 'Checking...'
+                            : (_verifiedCallLog?.isDialed == true ? 'Refresh' : 'Verify'),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Smart Voicemail Detection Banner for short connected calls (1-18s)
+        if (_isCallConnected && _durationSeconds > 0 && _durationSeconds <= 18) ...[
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.deepPurple.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.deepPurple.shade200),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.voicemail_rounded, size: 17, color: Colors.deepPurple),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Short call (${_durationSeconds}s). Was this Voicemail / IVR?',
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      color: Colors.deepPurple,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                FilledButton.tonal(
+                  style: FilledButton.styleFrom(
                     visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    backgroundColor: _selectedDisposition == 'VOICEMAIL'
+                        ? Colors.deepPurple
+                        : Colors.deepPurple.withValues(alpha: 0.2),
+                    foregroundColor: _selectedDisposition == 'VOICEMAIL' ? Colors.white : Colors.deepPurple,
                   ),
                   onPressed: () {
+                    setState(() {
+                      _selectedDisposition = 'VOICEMAIL';
+                    });
+                  },
+                  child: const Text('Mark Voicemail', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// 4. Structured Call Disposition & Outcome Card
+  Widget _buildDispositionCard() {
+    final isConnectedOutcomes = _isCallConnected && !_allowUnconnectedOverrideForShortCalls;
+    final cardBorderColor = isConnectedOutcomes ? const Color(0xFF86EFAC) : const Color(0xFFFDE047);
+    final headerIconColor = isConnectedOutcomes ? const Color(0xFF16A34A) : Colors.amber.shade800;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cardBorderColor, width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header Row
+          Row(
+            children: [
+              Icon(
+                isConnectedOutcomes ? Icons.phone_in_talk_rounded : Icons.phone_missed_rounded,
+                size: 16,
+                color: headerIconColor,
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  isConnectedOutcomes ? 'Connected Outcomes' : 'Not Connected Outcomes',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 6),
+              if (_isCallConnected)
+                InkWell(
+                  onTap: () {
                     setState(() {
                       _allowUnconnectedOverrideForShortCalls = !_allowUnconnectedOverrideForShortCalls;
                       _selectedDisposition = _allowUnconnectedOverrideForShortCalls
@@ -1249,30 +1690,40 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                           : 'CONNECTED_INTERESTED';
                     });
                   },
-                  icon: const Icon(Icons.swap_horiz, size: 16),
-                  label: Text(
-                    _allowUnconnectedOverrideForShortCalls ? 'Show Connected' : 'Show Unconnected',
-                    style: const TextStyle(fontSize: 12),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.swap_horiz, size: 15, color: Color(0xFF2563EB)),
+                        const SizedBox(width: 3),
+                        Text(
+                          _allowUnconnectedOverrideForShortCalls ? 'Show Connected' : 'Show Unconnected',
+                          style: const TextStyle(fontSize: 11, color: Color(0xFF2563EB), fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
                   ),
                 )
               else
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
+                    color: const Color(0xFFF1F5F9),
                     borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
                   ),
-                  child: Row(
+                  child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.lock_outline_rounded, size: 12, color: Colors.grey.shade700),
-                      const SizedBox(width: 3),
+                      Icon(Icons.lock_outline_rounded, size: 11, color: Color(0xFF64748B)),
+                      SizedBox(width: 3),
                       Text(
                         'Connected Locked (0s)',
                         style: TextStyle(
-                          fontSize: 10.5,
+                          fontSize: 10,
                           fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade700,
+                          color: Color(0xFF64748B),
                         ),
                       ),
                     ],
@@ -1280,87 +1731,45 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                 ),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
 
-          // Smart Voicemail Detection Banner for short connected calls (1-18s)
-          if (_isCallConnected && _durationSeconds > 0 && _durationSeconds <= 18) ...[
-            Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.deepPurple.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.deepPurple.shade200),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.voicemail_rounded, size: 20, color: Colors.deepPurple),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Short call (${_durationSeconds}s). Was this an automated Voicemail / IVR?',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Colors.deepPurple,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  FilledButton.tonal(
-                    style: FilledButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      backgroundColor: _selectedDisposition == 'VOICEMAIL'
-                          ? Colors.deepPurple
-                          : Colors.deepPurple.withValues(alpha: 0.2),
-                      foregroundColor: _selectedDisposition == 'VOICEMAIL'
-                          ? Colors.white
-                          : Colors.deepPurple,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        _selectedDisposition = 'VOICEMAIL';
-                      });
-                    },
-                    child: const Text('Mark Voicemail', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          // Filtered Choice Chips (Only unlocked after call connects with > 0s)
+          // Disposition ChoiceChips
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: ((_isCallConnected && !_allowUnconnectedOverrideForShortCalls)
-                    ? _connectedOptions
-                    : _unconnectedOptions)
-                .map((opt) {
+            spacing: 7,
+            runSpacing: 6,
+            children: (isConnectedOutcomes ? _connectedOptions : _unconnectedOptions).map((opt) {
               final isSelected = _selectedDisposition == opt['id'];
               final color = opt['color'] as Color;
               return ChoiceChip(
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 label: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       opt['icon'] as IconData,
-                      size: 16,
+                      size: 14,
                       color: isSelected ? Colors.white : color,
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 4),
                     Text(
                       opt['label'] as String,
                       style: TextStyle(
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                        color: isSelected ? Colors.white : Colors.black87,
+                        fontSize: 11,
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                        color: isSelected ? Colors.white : const Color(0xFF1E293B),
                       ),
                     ),
                   ],
                 ),
                 selected: isSelected,
                 selectedColor: color,
-                backgroundColor: colorScheme.surface,
+                backgroundColor: const Color(0xFFF8FAFC),
+                side: BorderSide(
+                  color: isSelected ? color : color.withValues(alpha: 0.28),
+                  width: 1,
+                ),
                 onSelected: (val) {
                   if (val) {
                     setState(() {
@@ -1374,104 +1783,167 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
               );
             }).toList(),
           ),
-          const SizedBox(height: 10),
+        ],
+      ),
+    );
+  }
 
-          // Follow-up & Callback Reminder Section
-          Card(
-            color: _followupDateTime != null
-                ? Colors.amber.shade50
-                : const Color(0xFFF8FAFC),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(
-                color: _followupDateTime != null
-                    ? Colors.amber.shade400
-                    : const Color(0xFFE2E8F0),
+  /// 5. Callback & Follow-up Reminder Card
+  Widget _buildFollowupCard() {
+    final isFollowupSet = _followupDateTime != null;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isFollowupSet ? const Color(0xFFFFFBEB) : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isFollowupSet ? const Color(0xFFF59E0B) : const Color(0xFFE2E8F0),
+          width: 1.2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.alarm_on_rounded,
+                color: isFollowupSet ? const Color(0xFFD97706) : const Color(0xFF64748B),
+                size: 16,
               ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.alarm_on_rounded,
-                        color: _followupDateTime != null
-                            ? Colors.amber.shade900
-                            : const Color(0xFF64748B),
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _followupDateTime != null
-                              ? 'Callback: ${_followupDateTime!.day}/${_followupDateTime!.month} at ${_followupDateTime!.hour.toString().padLeft(2, '0')}:${_followupDateTime!.minute.toString().padLeft(2, '0')}'
-                              : 'Schedule Callback / Follow-Up Reminder',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: _followupDateTime != null
-                                ? Colors.amber.shade900
-                                : const Color(0xFF334155),
-                          ),
-                        ),
-                      ),
-                      if (_followupDateTime != null)
-                        InkWell(
-                          onTap: () => setState(() => _followupDateTime = null),
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: Colors.red.shade100,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(Icons.close, size: 14, color: Colors.red),
-                          ),
-                        ),
-                    ],
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  isFollowupSet
+                      ? 'Callback: ${_followupDateTime!.day}/${_followupDateTime!.month} at ${_followupDateTime!.hour.toString().padLeft(2, '0')}:${_followupDateTime!.minute.toString().padLeft(2, '0')}'
+                      : 'Schedule Callback / Follow-Up Reminder',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: isFollowupSet ? const Color(0xFF92400E) : const Color(0xFF1E293B),
                   ),
-                  const SizedBox(height: 8),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        _buildPresetChip('+15 Mins', () => _setFollowupPreset(const Duration(minutes: 15))),
-                        _buildPresetChip('+30 Mins', () => _setFollowupPreset(const Duration(minutes: 30))),
-                        _buildPresetChip('+1 Hour', () => _setFollowupPreset(const Duration(hours: 1))),
-                        _buildPresetChip('+2 Hours', () => _setFollowupPreset(const Duration(hours: 2))),
-                        _buildPresetChip('Tomorrow 10 AM', () => _setFollowupPresetAbsolute(hour: 10, minute: 0, tomorrow: true)),
-                        _buildPresetChip('Tomorrow 3 PM', () => _setFollowupPresetAbsolute(hour: 15, minute: 0, tomorrow: true)),
-                        ActionChip(
-                          avatar: const Icon(Icons.edit_calendar, size: 14),
-                          label: const Text('Custom Picker', style: TextStyle(fontSize: 11)),
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          onPressed: _pickFollowupDateTime,
-                        ),
-                      ],
+                ),
+              ),
+              if (isFollowupSet)
+                InkWell(
+                  onTap: () => setState(() => _followupDateTime = null),
+                  child: Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade100,
+                      shape: BoxShape.circle,
                     ),
+                    child: const Icon(Icons.close, size: 12, color: Colors.red),
                   ),
-                ],
-              ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                // Highlighted Date & Time Picker
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ActionChip(
+                    avatar: const Icon(Icons.calendar_month_rounded, size: 14, color: Color(0xFF2563EB)),
+                    label: const Text(
+                      'Pick Date & Time',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1E40AF),
+                      ),
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    backgroundColor: const Color(0xFFEFF6FF),
+                    side: const BorderSide(color: Color(0xFFBFDBFE), width: 1.1),
+                    onPressed: _pickFollowupDateTime,
+                  ),
+                ),
+                _buildPresetChip('+15m', () => _setFollowupPreset(const Duration(minutes: 15))),
+                _buildPresetChip('+30m', () => _setFollowupPreset(const Duration(minutes: 30))),
+                _buildPresetChip('+1h', () => _setFollowupPreset(const Duration(hours: 1))),
+                _buildPresetChip('+2h', () => _setFollowupPreset(const Duration(hours: 2))),
+                _buildPresetChip('Tmrw 10 AM', () => _setFollowupPresetAbsolute(hour: 10, minute: 0, tomorrow: true)),
+                _buildPresetChip('Tmrw 3 PM', () => _setFollowupPresetAbsolute(hour: 15, minute: 0, tomorrow: true)),
+              ],
             ),
           ),
-          const SizedBox(height: 10),
+        ],
+      ),
+    );
+  }
+
+  /// 6. Telecaller Remarks & Quick Notes Card
+  Widget _buildRemarksCard() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header Row
+          Row(
+            children: [
+              const Icon(Icons.edit_note_rounded, size: 17, color: Color(0xFF64748B)),
+              const SizedBox(width: 6),
+              const Text(
+                'Telecaller Remarks & Quick Notes',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1E293B),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
 
           // Quick Remarks Chips
-          const Text('Quick Remarks', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey)),
-          const SizedBox(height: 4),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
               children: _quickRemarks.map((remark) {
                 return Padding(
-                  padding: const EdgeInsets.only(right: 6.0),
+                  padding: const EdgeInsets.only(right: 5.0),
                   child: ActionChip(
-                    label: Text(remark, style: const TextStyle(fontSize: 11)),
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    label: Text(
+                      remark,
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        color: Color(0xFF334155),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                     visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    backgroundColor: const Color(0xFFF8FAFC),
+                    side: const BorderSide(color: Color(0xFFE2E8F0)),
                     onPressed: () {
                       final current = _notesController.text;
                       if (current.isEmpty) {
@@ -1490,22 +1962,35 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
           // Detailed Notes Field
           TextField(
             controller: _notesController,
+            minLines: 1,
             maxLines: 2,
+            style: const TextStyle(fontSize: 12.5, color: Color(0xFF0F172A)),
             decoration: InputDecoration(
               isDense: true,
-              labelText: 'Telecaller Remarks / Notes',
               hintText: 'Enter feedback, loan interest, objections...',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+              prefixIcon: const Icon(Icons.notes_rounded, size: 17, color: Color(0xFF64748B)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFF2563EB), width: 1.5),
+              ),
               filled: true,
+              fillColor: const Color(0xFFF8FAFC),
             ),
           ),
-          const SizedBox(height: 12),
         ],
       ),
-    ),
-  ),
-);
-}
+    );
+  }
 
   Color _getTimingTierBgColor() {
     switch (_timingClassification) {

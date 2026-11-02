@@ -3,7 +3,13 @@ import 'package:http/http.dart' as http;
 import 'package:callnow_new/services/config_service.dart';
 
 class ApiService {
-  static String get _baseUrl => ConfigService.baseUrl;
+  static String get _baseUrl {
+    String url = ConfigService.baseUrl.trim();
+    while (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
+    }
+    return url;
+  }
   static String? get _token => ConfigService.token;
 
   static Map<String, String> get _headers => {
@@ -38,8 +44,10 @@ class ApiService {
         final data = json.decode(response.body);
         if (data['success'] == true && data['data'] != null) {
           final token = data['data']['token'];
-          final userData = data['data']['user'];
-          await ConfigService.saveAuthData(token, userData);
+          final userData = data['data']['user'] is Map
+              ? Map<String, dynamic>.from(data['data']['user'])
+              : <String, dynamic>{};
+          await ConfigService.saveAuthData(token, userData, fallbackEmail: email);
           return {
             'success': true,
             'token': token,
@@ -104,24 +112,238 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getProfile() async {
-    final response = await http.get(
-      Uri.parse('$_baseUrl/auth/me'),
-      headers: _headers,
-    );
+    final candidateEndpoints = [
+      '$_baseUrl/auth/me',
+      '$_baseUrl/auth/profile',
+      '$_baseUrl/me',
+      '$_baseUrl/profile',
+      '$_baseUrl/telecaller/profile',
+    ];
 
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data['success'] == true) {
-        await ConfigService.saveAuthData(_token!, data['data']);
-        return data['data'];
+    http.Response? lastResponse;
+
+    for (final url in candidateEndpoints) {
+      try {
+        final response = await http.get(
+          Uri.parse(url),
+          headers: _headers,
+        );
+        lastResponse = response;
+        print('[ApiService] GET $url -> ${response.statusCode}');
+
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          if (data['success'] == true) {
+            final raw = data['data'];
+            Map<String, dynamic> profileData = raw is Map ? Map<String, dynamic>.from(raw) : {};
+            if (profileData.containsKey('user') && profileData['user'] is Map) {
+              final nested = Map<String, dynamic>.from(profileData['user'] as Map);
+              nested.forEach((k, v) => profileData.putIfAbsent(k, () => v));
+            }
+            if (_token != null && _token!.isNotEmpty) {
+              await ConfigService.saveAuthData(_token!, profileData);
+            }
+            return profileData;
+          }
+        } else if (response.statusCode == 401) {
+          await ConfigService.clearAuthData();
+          throw Exception('Session expired. Please login again.');
+        }
+      } catch (e) {
+        if (e.toString().contains('Session expired')) rethrow;
       }
-      throw Exception(data['message'] ?? 'Failed to get profile');
-    } else if (response.statusCode == 401) {
-      await ConfigService.clearAuthData();
-      throw Exception('Session expired. Please login again.');
-    } else {
-      throw Exception('Failed to get profile: ${response.statusCode}');
     }
+
+    if (lastResponse != null) {
+      if (lastResponse.statusCode == 401) {
+        await ConfigService.clearAuthData();
+        throw Exception('Session expired. Please login again.');
+      }
+      throw Exception('Failed to get profile: ${lastResponse.statusCode}');
+    }
+    throw Exception('Failed to get profile: Could not reach server');
+  }
+
+  /// Request Password Reset OTP to registered email
+  static Future<Map<String, dynamic>> sendPasswordResetOtp(String email) async {
+    final cleanEmail = email.trim();
+    if (cleanEmail.isEmpty) {
+      throw Exception('Email address is required');
+    }
+
+    final endpoints = [
+      '$_baseUrl/auth/forgot-password',
+      '$_baseUrl/auth/send-otp',
+      '$_baseUrl/auth/reset-password/otp',
+      '$_baseUrl/auth/password/email-otp',
+    ];
+
+    final body = json.encode({'email': cleanEmail});
+    http.Response? lastResponse;
+
+    for (final url in endpoints) {
+      try {
+        final res = await http.post(
+          Uri.parse(url),
+          headers: _headers,
+          body: body,
+        );
+        lastResponse = res;
+        if (res.statusCode == 200 || res.statusCode == 201) {
+          final data = json.decode(res.body);
+          if (data is Map<String, dynamic>) {
+            return data;
+          }
+          return {'success': true, 'message': 'OTP sent to $cleanEmail'};
+        }
+      } catch (_) {
+        // Try next endpoint fallback
+      }
+    }
+
+    if (lastResponse != null) {
+      try {
+        final data = json.decode(lastResponse.body);
+        final msg = data['message'] ?? data['error']?['message'] ?? 'Failed to send OTP';
+        throw Exception(msg);
+      } catch (e) {
+        if (e is Exception) rethrow;
+        throw Exception('Failed to send OTP: ${lastResponse.statusCode}');
+      }
+    }
+    throw Exception('Could not reach password reset service. Please check your connection.');
+  }
+
+  /// Verify OTP and reset password
+  static Future<Map<String, dynamic>> resetPasswordWithOtp({
+    required String email,
+    required String otp,
+    required String newPassword,
+  }) async {
+    final cleanEmail = email.trim();
+    final cleanOtp = otp.trim();
+    final cleanPass = newPassword.trim();
+
+    if (cleanEmail.isEmpty) throw Exception('Email address is required');
+    if (cleanOtp.isEmpty) throw Exception('OTP verification code is required');
+    if (cleanPass.length < 6) throw Exception('Password must be at least 6 characters');
+
+    final endpoints = [
+      '$_baseUrl/auth/reset-password',
+      '$_baseUrl/auth/verify-otp-reset',
+      '$_baseUrl/auth/password/reset',
+    ];
+
+    final body = json.encode({
+      'email': cleanEmail,
+      'otp': cleanOtp,
+      'token': cleanOtp,
+      'code': cleanOtp,
+      'password': cleanPass,
+      'new_password': cleanPass,
+      'password_confirmation': cleanPass,
+    });
+
+    http.Response? lastResponse;
+
+    for (final url in endpoints) {
+      try {
+        final res = await http.post(
+          Uri.parse(url),
+          headers: _headers,
+          body: body,
+        );
+        lastResponse = res;
+        if (res.statusCode == 200 || res.statusCode == 201) {
+          final data = json.decode(res.body);
+          if (data is Map<String, dynamic>) {
+            return data;
+          }
+          return {'success': true, 'message': 'Password reset successfully'};
+        }
+      } catch (_) {
+        // Try next fallback
+      }
+    }
+
+    if (lastResponse != null) {
+      try {
+        final data = json.decode(lastResponse.body);
+        final msg = data['message'] ?? data['error']?['message'] ?? 'Failed to reset password';
+        throw Exception(msg);
+      } catch (e) {
+        if (e is Exception) rethrow;
+        throw Exception('Failed to reset password: ${lastResponse.statusCode}');
+      }
+    }
+    throw Exception('Could not reset password. Please check your network and try again.');
+  }
+
+  /// Update Agent Profile Details (Name, Company, etc.)
+  /// Note: Server strictly restricts modifying email and mobile number.
+  static Future<Map<String, dynamic>> updateProfile({
+    required String name,
+    String? companyName,
+    String? photoBase64,
+  }) async {
+    final cleanName = name.trim();
+    if (cleanName.isEmpty) {
+      throw Exception('Name cannot be empty');
+    }
+    final body = <String, dynamic>{
+      'name': cleanName,
+      if (companyName != null && companyName.trim().isNotEmpty)
+        'company_name': companyName.trim(),
+      if (photoBase64 != null && photoBase64.isNotEmpty)
+        'profile_photo_base64': photoBase64,
+    };
+    final response = await http.post(
+      Uri.parse('$_baseUrl/auth/profile'),
+      headers: _headers,
+      body: json.encode(body),
+    );
+    final data = json.decode(response.body);
+    if (response.statusCode == 200 && data['success'] == true) {
+      final updatedUser = data['data'] != null && data['data']['user'] is Map
+          ? Map<String, dynamic>.from(data['data']['user'])
+          : (data['data'] is Map ? Map<String, dynamic>.from(data['data']) : <String, dynamic>{});
+      if (_token != null) {
+        await ConfigService.saveAuthData(_token!, updatedUser);
+      }
+      return updatedUser;
+    }
+    final errorMsg = data['error']?['message'] ??
+        data['message'] ??
+        'Failed to update profile (${response.statusCode})';
+    throw Exception(errorMsg);
+  }
+
+  /// Change Password while logged in
+  static Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+    required String confirmPassword,
+  }) async {
+    if (currentPassword.isEmpty) throw Exception('Current password is required');
+    if (newPassword.length < 6) throw Exception('New password must be at least 6 characters');
+    if (newPassword != confirmPassword) throw Exception('Passwords do not match');
+    final response = await http.post(
+      Uri.parse('$_baseUrl/auth/change-password'),
+      headers: _headers,
+      body: json.encode({
+        'current_password': currentPassword,
+        'new_password': newPassword,
+        'confirm_password': confirmPassword,
+      }),
+    );
+    final data = json.decode(response.body);
+    if (response.statusCode == 200 && data['success'] == true) {
+      return;
+    }
+    final errorMsg = data['error']?['message'] ??
+        data['message'] ??
+        'Failed to change password (${response.statusCode})';
+    throw Exception(errorMsg);
   }
 
   static Future<void> refreshToken() async {
@@ -228,20 +450,32 @@ class ApiService {
     String? package,
     String? otherInfo,
     String? status,
+    String? loanType,
+    String? stage,
+    String? priority,
+    String? loginBank,
+    String? nextFollowup,
     String source = 'MAIN',
   }) async {
+    final payload = <String, dynamic>{
+      'name': name.trim(),
+      'mobile': mobile.trim(),
+      'company': company?.trim() ?? '',
+      'package': package?.trim() ?? '',
+      'other_info': otherInfo?.trim() ?? '',
+      'status': status?.trim() ?? 'LEAD',
+      'source': source,
+    };
+    if (loanType != null) payload['loan_type'] = loanType;
+    if (stage != null) payload['lead_stage'] = stage;
+    if (priority != null) payload['priority'] = priority;
+    if (loginBank != null) payload['login_bank_name'] = loginBank;
+    if (nextFollowup != null) payload['next_followup_at'] = nextFollowup;
+
     final response = await http.post(
       Uri.parse('$_baseUrl/telecaller/leads'),
       headers: _headers,
-      body: json.encode({
-        'name': name.trim(),
-        'mobile': mobile.trim(),
-        'company': company?.trim() ?? '',
-        'package': package?.trim() ?? '',
-        'other_info': otherInfo?.trim() ?? '',
-        'status': status?.trim() ?? 'Not Called',
-        'source': source,
-      }),
+      body: json.encode(payload),
     );
 
     final data = json.decode(response.body);
@@ -317,6 +551,41 @@ class ApiService {
     if (response.statusCode != 200 || data['success'] != true) {
       throw Exception(data['message'] ?? 'Failed to update lead');
     }
+  }
+
+  /// Update CRM Lead Stage & Pipeline status
+  static Future<void> updateLeadStage({
+    required int id,
+    required String newStage,
+    String? remarks,
+    String? nextFollowupAt,
+    String source = 'MAIN',
+  }) async {
+    final payload = <String, dynamic>{
+      'status': newStage,
+      'lead_status_new': newStage,
+    };
+    if (remarks != null && remarks.isNotEmpty) payload['other_info'] = remarks;
+    if (nextFollowupAt != null) payload['next_followup'] = nextFollowupAt;
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/telecaller/leads/$id/stage'),
+        headers: _headers,
+        body: json.encode(payload),
+      );
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return;
+      }
+    } catch (_) {}
+
+    // Fallback to updateLead endpoint
+    await updateLead(
+      id: id,
+      source: source,
+      status: newStage,
+      otherInfo: remarks,
+    );
   }
 
   /// Get aggregated performance reports summary
