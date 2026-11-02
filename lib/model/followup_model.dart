@@ -84,24 +84,25 @@ class FollowupModel {
   }
 
   factory FollowupModel.fromJson(Map<String, dynamic> json) {
+    DateTime? parseDate(dynamic val) {
+      if (val == null) return null;
+      return DateTime.tryParse(val.toString());
+    }
+
     return FollowupModel(
-      id: json['id'] as String,
+      id: (json['id'] ?? 'f_${DateTime.now().millisecondsSinceEpoch}').toString(),
       leadId: json['lead_id'] is int
           ? json['lead_id'] as int
           : int.tryParse(json['lead_id']?.toString() ?? ''),
-      customerName: json['customer_name'] as String? ?? 'Unknown Customer',
-      phoneNumber: json['phone_number'] as String? ?? '',
-      company: json['company'] as String?,
-      scheduledTime: DateTime.parse(json['scheduled_time'] as String),
-      createdAt: json['created_at'] != null
-          ? DateTime.parse(json['created_at'] as String)
-          : DateTime.now(),
-      notes: json['notes'] as String? ?? '',
-      status: json['status'] as String? ?? 'pending',
-      completedAt: json['completed_at'] != null
-          ? DateTime.parse(json['completed_at'] as String)
-          : null,
-      source: json['source'] as String?,
+      customerName: json['customer_name']?.toString() ?? 'Unknown Customer',
+      phoneNumber: json['phone_number']?.toString() ?? '',
+      company: json['company']?.toString(),
+      scheduledTime: parseDate(json['scheduled_time']) ?? DateTime.now(),
+      createdAt: parseDate(json['created_at']) ?? DateTime.now(),
+      notes: json['notes']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'pending',
+      completedAt: parseDate(json['completed_at']),
+      source: json['source']?.toString(),
     );
   }
 

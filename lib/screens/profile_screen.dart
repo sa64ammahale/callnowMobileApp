@@ -568,8 +568,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             textAlign: TextAlign.center,
                           ),
                           const SizedBox(height: 12),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 8,
+                            runSpacing: 6,
                             children: [
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -587,7 +589,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 8),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                 decoration: BoxDecoration(
@@ -793,12 +794,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               children: [
                                 Icon(Icons.lock_reset_rounded, size: 18, color: Color(0xFFD97706)),
                                 SizedBox(width: 8),
-                                Text(
-                                  'Security & Authentication',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF0F172A),
+                                Expanded(
+                                  child: Text(
+                                    'Security & Authentication',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF0F172A),
+                                    ),
                                   ),
                                 ),
                               ],
@@ -809,35 +812,49 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               style: TextStyle(fontSize: 12, color: Color(0xFF64748B), height: 1.35),
                             ),
                             const SizedBox(height: 14),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: FilledButton.icon(
-                                    onPressed: _showChangePasswordDialog,
-                                    icon: const Icon(Icons.password_rounded, size: 16),
-                                    label: const Text('Change Password'),
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: const Color(0xFF2563EB),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(vertical: 11),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                    ),
+                            LayoutBuilder(
+                              builder: (ctx, constraints) {
+                                final isNarrow = constraints.maxWidth < 300;
+                                final changeBtn = FilledButton.icon(
+                                  onPressed: _showChangePasswordDialog,
+                                  icon: const Icon(Icons.password_rounded, size: 16),
+                                  label: const Text('Change Password'),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: const Color(0xFF2563EB),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 11),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: _showPasswordResetDialog,
-                                    icon: const Icon(Icons.mail_outline_rounded, size: 16, color: Color(0xFF2563EB)),
-                                    label: const Text('Email OTP Reset', style: TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.bold)),
-                                    style: OutlinedButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(vertical: 11),
-                                      side: const BorderSide(color: Color(0xFF2563EB), width: 1.2),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                    ),
+                                );
+                                final resetBtn = OutlinedButton.icon(
+                                  onPressed: _showPasswordResetDialog,
+                                  icon: const Icon(Icons.mail_outline_rounded, size: 16, color: Color(0xFF2563EB)),
+                                  label: const Text('Email OTP Reset', style: TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.bold)),
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(vertical: 11),
+                                    side: const BorderSide(color: Color(0xFF2563EB), width: 1.2),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                                   ),
-                                ),
-                              ],
+                                );
+
+                                if (isNarrow) {
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      changeBtn,
+                                      const SizedBox(height: 8),
+                                      resetBtn,
+                                    ],
+                                  );
+                                }
+                                return Row(
+                                  children: [
+                                    Expanded(child: changeBtn),
+                                    const SizedBox(width: 8),
+                                    Expanded(child: resetBtn),
+                                  ],
+                                );
+                              },
                             ),
                           ],
                         ),

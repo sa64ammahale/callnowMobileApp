@@ -358,9 +358,12 @@ class _FollowUpScreenState extends State<FollowUpScreen>
               children: [
                 Icon(Icons.calendar_month, size: 22, color: Color(0xFF2563EB)),
                 SizedBox(width: 8),
-                Text(
-                  'Follow-Up Pipeline',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                Expanded(
+                  child: Text(
+                    'Follow-Up Pipeline',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ],
             ),
