@@ -39,6 +39,14 @@ class NotificationService {
         final localName = DateTime.now().timeZoneName;
         if (tz.timeZoneDatabase.locations.containsKey(localName)) {
           tz.setLocalLocation(tz.getLocation(localName));
+        } else {
+          final offset = DateTime.now().timeZoneOffset.inMilliseconds;
+          for (final location in tz.timeZoneDatabase.locations.values) {
+            if (location.currentTimeZone.offset == offset) {
+              tz.setLocalLocation(location);
+              break;
+            }
+          }
         }
       } catch (_) {}
 

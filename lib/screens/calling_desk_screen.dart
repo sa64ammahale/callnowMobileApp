@@ -6,9 +6,11 @@ import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
+import 'package:callnow_new/screens/followup_screen.dart';
 
 class CallingDeskScreen extends StatefulWidget {
-  const CallingDeskScreen({super.key});
+  final VoidCallback? onBack;
+  const CallingDeskScreen({super.key, this.onBack});
 
   @override
   State<CallingDeskScreen> createState() => _CallingDeskScreenState();
@@ -37,7 +39,6 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
   int _durationSeconds = 0;
   DateTime? _followupDateTime;
   bool _allowUnconnectedOverrideForShortCalls = false;
-  bool _isOtherInfoExpanded = false;
 
   bool get _isCallConnected => _durationSeconds > 0;
 
@@ -291,7 +292,6 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     _durationSeconds = 0;
     _followupDateTime = null;
     _allowUnconnectedOverrideForShortCalls = false;
-    _isOtherInfoExpanded = false;
     _selectedDisposition = 'RINGING';
     _verifiedCallLog = null;
     _isCheckingCallLog = false;
@@ -480,18 +480,19 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
   }
 
   String _formatPackageAmount(String package) {
-    if (package.isEmpty) return '';
+    if (package.isEmpty) return 'RS. 0 LACS';
     final cleaned = package.replaceAll(RegExp(r'[^\d.]'), '');
     final numVal = double.tryParse(cleaned);
     if (numVal != null && numVal > 0) {
       if (numVal >= 10000000) {
-        return '₹${(numVal / 10000000).toStringAsFixed(2)} Cr';
+        return 'RS. ${(numVal / 10000000).toStringAsFixed(2)} CR';
       } else if (numVal >= 100000) {
-        return '₹${(numVal / 100000).toStringAsFixed(2)} Lakh';
+        return 'RS. ${(numVal / 100000).toStringAsFixed(2)} LACS';
       }
-      return '₹${numVal.toInt()}';
+      return 'RS. ${numVal.toInt()}';
     }
-    return package.startsWith('₹') ? package : '₹$package';
+    final upper = package.toUpperCase().replaceAll('₹', 'RS. ').trim();
+    return upper.startsWith('RS.') ? upper : 'RS. $upper';
   }
 
   Widget _buildPresetChip(String label, VoidCallback onTap) {
@@ -531,6 +532,10 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
   Future<void> _submitAndNext() async {
     final lead = _currentLead;
     if (lead == null) return;
+
+    final wasInterested = _selectedDisposition == 'ENQUIRY_INTERESTED';
+    final currentLeadSnapshot = Map<String, dynamic>.from(lead);
+    final currentRemarksSnapshot = _notesController.text.trim();
 
     final bool isDialed = _verifiedCallLog != null && _verifiedCallLog!.isDialed;
     final verifiedDur = isDialed ? _verifiedCallLog!.durationSeconds : 0;
@@ -608,6 +613,11 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         ? (verifiedDur > 20 ? 'CONNECTED_CONVERSATION' : 'CONNECTED_SHORT')
         : 'NOT_CONNECTED';
 
+    // Auto-schedule callback 2 hours later if CallBack/Busy was selected without explicit preset
+    if (_selectedDisposition == 'CALLBACK_BUSY' && _followupDateTime == null) {
+      _followupDateTime = DateTime.now().add(const Duration(hours: 2));
+    }
+
     String? followupIso;
     if (_followupDateTime != null) {
       followupIso = _followupDateTime!.toIso8601String().replaceAll('T', ' ').substring(0, 19);
@@ -663,6 +673,14 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         if (_leads.length - _currentIndex <= 3) {
           _fetchMoreLeads();
         }
+
+        // If user selected "Enquiry/ Intrested", immediately open the Create Lead form prefilled!
+        if (wasInterested) {
+          _showCreateLeadModal(
+            leadData: currentLeadSnapshot,
+            initialRemarks: currentRemarksSnapshot,
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -677,13 +695,377 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     }
   }
 
+  /// Opens the Create CRM Lead modal pre-filled with the current prospect's details
+  void _showCreateLeadModal({
+    required Map<String, dynamic> leadData,
+    String? initialRemarks,
+  }) {
+    final formKey = GlobalKey<FormState>();
+    final nameCtrl = TextEditingController(text: leadData['name']?.toString() ?? '');
+
+    // Format 10-digit mobile number cleanly
+    String rawMobile = leadData['mobile']?.toString() ?? '';
+    final digits = rawMobile.replaceAll(RegExp(r'\D'), '');
+    final cleanMobile = digits.length > 10 ? digits.substring(digits.length - 10) : digits;
+    final mobileCtrl = TextEditingController(text: cleanMobile);
+
+    final companyCtrl = TextEditingController(
+      text: (leadData['company'] != null && leadData['company'] != 'Individual')
+          ? leadData['company'].toString()
+          : '',
+    );
+    final amountCtrl = TextEditingController(text: leadData['package']?.toString() ?? '');
+    final remarksCtrl = TextEditingController(
+      text: (initialRemarks != null && initialRemarks.isNotEmpty)
+          ? initialRemarks
+          : (leadData['other_info']?.toString() ?? ''),
+    );
+
+    String selectedLoanType = LeadStageHelper.loanTypes.contains(leadData['loan_type'])
+        ? leadData['loan_type'].toString()
+        : LeadStageHelper.loanTypes.first;
+    String selectedStage = 'LEAD';
+    String selectedPriority = 'High';
+    String selectedTemp = 'Hot';
+    bool isModalSubmitting = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (modalCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                top: 20,
+                left: 20,
+                right: 20,
+                bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 24,
+              ),
+              child: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Header
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFDCFCE7),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(Icons.person_add_alt_1_rounded, color: Color(0xFF16A34A), size: 22),
+                          ),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Create CRM Lead',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                                Text(
+                                  'Client interested — Convert to sales pipeline',
+                                  style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded, color: Color(0xFF64748B)),
+                            onPressed: () => Navigator.pop(modalCtx),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      const Divider(height: 1),
+                      const SizedBox(height: 14),
+
+                      // Customer Full Name
+                      TextFormField(
+                        controller: nameCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'Customer Full Name *',
+                          prefixIcon: const Icon(Icons.person_outline, size: 20),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          isDense: true,
+                        ),
+                        validator: (v) => v == null || v.trim().isEmpty ? 'Name is required' : null,
+                      ),
+                      const SizedBox(height: 11),
+
+                      // 10-Digit Mobile Number
+                      TextFormField(
+                        controller: mobileCtrl,
+                        keyboardType: TextInputType.phone,
+                        maxLength: 10,
+                        decoration: InputDecoration(
+                          labelText: '10-Digit Mobile Number *',
+                          prefixIcon: const Icon(Icons.phone_outlined, size: 20),
+                          prefixText: '+91 ',
+                          counterText: '',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          isDense: true,
+                        ),
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) return 'Mobile is required';
+                          final clean = v.replaceAll(RegExp(r'\D'), '');
+                          if (clean.length != 10) return 'Must be 10 digits';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 11),
+
+                      // Employer / Company & Loan Package Row
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: companyCtrl,
+                              decoration: InputDecoration(
+                                labelText: 'Company / Employer',
+                                prefixIcon: const Icon(Icons.business_outlined, size: 20),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextFormField(
+                              controller: amountCtrl,
+                              decoration: InputDecoration(
+                                labelText: 'Loan Amount / Pkg',
+                                prefixIcon: const Icon(Icons.currency_rupee, size: 20),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 11),
+
+                      // Loan Type & Lead Temperature Row
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              initialValue: selectedLoanType,
+                              decoration: InputDecoration(
+                                labelText: 'Loan Type',
+                                prefixIcon: const Icon(Icons.category_outlined, size: 20),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                isDense: true,
+                              ),
+                              items: LeadStageHelper.loanTypes.map((t) {
+                                return DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(fontSize: 12.5)));
+                              }).toList(),
+                              onChanged: (val) {
+                                if (val != null) setModalState(() => selectedLoanType = val);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              initialValue: selectedTemp,
+                              decoration: InputDecoration(
+                                labelText: 'Temperature',
+                                prefixIcon: const Icon(Icons.whatshot_rounded, size: 20, color: Colors.deepOrange),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                isDense: true,
+                              ),
+                              items: const [
+                                DropdownMenuItem(value: 'Hot', child: Text('🔥 Hot', style: TextStyle(fontSize: 12.5))),
+                                DropdownMenuItem(value: 'Warm', child: Text('☀️ Warm', style: TextStyle(fontSize: 12.5))),
+                                DropdownMenuItem(value: 'Cold', child: Text('❄️ Cold', style: TextStyle(fontSize: 12.5))),
+                              ],
+                              onChanged: (val) {
+                                if (val != null) setModalState(() => selectedTemp = val);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 11),
+
+                      // Notes / Discussion Remarks
+                      TextFormField(
+                        controller: remarksCtrl,
+                        maxLines: 2,
+                        decoration: InputDecoration(
+                          labelText: 'Notes / Remarks',
+                          prefixIcon: const Icon(Icons.notes_rounded, size: 20),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Submit Button
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981), // Emerald green
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          elevation: 2,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        onPressed: isModalSubmitting
+                            ? null
+                            : () async {
+                                if (!formKey.currentState!.validate()) return;
+                                setModalState(() => isModalSubmitting = true);
+
+                                try {
+                                  await ApiService.createLead(
+                                    name: nameCtrl.text.trim(),
+                                    mobile: mobileCtrl.text.trim(),
+                                    company: companyCtrl.text.trim(),
+                                    package: amountCtrl.text.trim(),
+                                    otherInfo: remarksCtrl.text.trim(),
+                                    status: selectedStage,
+                                    loanType: selectedLoanType,
+                                    stage: selectedTemp,
+                                    priority: selectedPriority,
+                                    source: 'MAIN',
+                                  );
+
+                                  if (modalCtx.mounted) Navigator.pop(modalCtx);
+
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Row(
+                                          children: [
+                                            const Icon(Icons.check_circle_rounded, color: Colors.white),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text('CRM Lead created for ${nameCtrl.text.trim()}! Added to pipeline.'),
+                                            ),
+                                          ],
+                                        ),
+                                        backgroundColor: const Color(0xFF16A34A),
+                                        behavior: SnackBarBehavior.floating,
+                                      ),
+                                    );
+                                  }
+                                } catch (e) {
+                                  setModalState(() => isModalSubmitting = false);
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Failed to create lead: $e'),
+                                        backgroundColor: Colors.red.shade700,
+                                        behavior: SnackBarBehavior.floating,
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                        icon: isModalSubmitting
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.check_circle_rounded, size: 20),
+                        label: Text(
+                          isModalSubmitting ? 'Creating Lead...' : 'Create Lead & Add to CRM',
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Scaffold(
-      body: _buildBody(colorScheme),
-      bottomNavigationBar: null,
+      backgroundColor: const Color(0xFF261936), // Deep dark purple matching screenshots
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF261936),
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () {
+            if (widget.onBack != null) {
+              widget.onBack!();
+            } else if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            }
+          },
+        ),
+        title: const Text(
+          'Dial Calls',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            color: const Color(0xFF383838),
+            onSelected: (val) {
+              if (val == 'reports') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const CallReportsScreen(initialTabIndex: 1, initialPeriod: 'today'),
+                  ),
+                );
+              } else if (val == 'followups') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const FollowUpScreen()),
+                );
+              } else if (val == 'refresh') {
+                _loadInitialBatch(force: true);
+              }
+            },
+            itemBuilder: (ctx) => const [
+              PopupMenuItem(
+                value: 'reports',
+                child: Text("Today's Reports", style: TextStyle(color: Colors.white)),
+              ),
+              PopupMenuItem(
+                value: 'followups',
+                child: Text('Client Follow-ups', style: TextStyle(color: Colors.white)),
+              ),
+              PopupMenuItem(
+                value: 'refresh',
+                child: Text('Refresh Contacts Queue', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: _buildBody(),
     );
   }
 
@@ -697,11 +1079,11 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
           child: ElevatedButton(
             onPressed: _isSubmitting ? null : _submitAndNext,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50), // Vibrant green matching screenshot
+              backgroundColor: const Color(0xFF4CAF50), // Bright green matching screenshots
               foregroundColor: Colors.white,
-              elevation: 2,
+              elevation: 1.5,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(8),
               ),
             ),
             child: _isSubmitting
@@ -713,18 +1095,17 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                 : const Text(
                     'Save & Next',
                     style: TextStyle(
-                      fontSize: 16.5,
+                      fontSize: 17,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.3,
                     ),
                   ),
           ),
         ),
-        const SizedBox(height: 6),
-        TextButton.icon(
+        const SizedBox(height: 4),
+        TextButton(
           onPressed: _isSubmitting ? null : _skipLead,
-          icon: const Icon(Icons.skip_next_rounded, size: 18, color: Color(0xFF64748B)),
-          label: const Text(
+          child: const Text(
             'Skip this lead',
             style: TextStyle(fontSize: 12.5, color: Color(0xFF64748B), fontWeight: FontWeight.w600),
           ),
@@ -733,15 +1114,15 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     );
   }
 
-  Widget _buildBody(ColorScheme colorScheme) {
+  Widget _buildBody() {
     if (_isLoading) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(),
+            CircularProgressIndicator(color: Colors.white),
             SizedBox(height: 16),
-            Text('Fetching call queue from server...', style: TextStyle(fontSize: 14)),
+            Text('Fetching call queue from server...', style: TextStyle(fontSize: 14, color: Colors.white70)),
           ],
         ),
       );
@@ -756,15 +1137,15 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
             children: [
               const Icon(Icons.error_outline, size: 64, color: Colors.redAccent),
               const SizedBox(height: 16),
-              Text(
+              const Text(
                 'Failed to load contacts',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
               ),
               const SizedBox(height: 8),
               Text(
                 _errorMessage!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.grey),
+                style: const TextStyle(color: Colors.white70),
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
@@ -789,21 +1170,21 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.1),
+                  color: Colors.green.withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.task_alt_rounded, size: 72, color: Colors.green),
+                child: const Icon(Icons.task_alt_rounded, size: 72, color: Colors.greenAccent),
               ),
               const SizedBox(height: 20),
               const Text(
                 'All Calls Completed!',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
               ),
               const SizedBox(height: 8),
               const Text(
                 'You have completed all contacts in the current batch. Tap below to fetch the next batch from the server.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
+                style: TextStyle(color: Colors.white70),
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
@@ -822,17 +1203,6 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     final company = (lead['company'] ?? '').toString().trim();
     final pkg = (lead['package'] ?? '').toString().trim();
     final formattedPkg = _formatPackageAmount(pkg);
-    final loanType = (lead['loan_type'] ?? '').toString().trim();
-    final otherInfo = (lead['other_info'] ?? '').toString().trim();
-    final callCount = int.tryParse(lead['call_count']?.toString() ?? '0') ?? 0;
-    final lastStatus = (lead['last_status'] ?? '').toString().trim();
-
-    final statusKey = (lead['status'] ?? lead['lead_status_new'] ?? lead['last_status'] ?? 'LEAD').toString().trim();
-    final stageColor = LeadStageHelper.getColor(statusKey);
-    final stageLabel = LeadStageHelper.getLabel(statusKey);
-    final stageIcon = LeadStageHelper.getIcon(statusKey);
-    final leadStage = (lead['lead_stage'] ?? lead['stage'] ?? '').toString().trim();
-    final priority = (lead['priority'] ?? '').toString().trim();
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -846,200 +1216,74 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         onRefresh: () => _loadInitialBatch(force: true),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Primary Contact Card (with queue badge & actions)
-              _buildContactCard(
-                name: name,
-                mobile: mobile,
-                company: company,
-                pkg: pkg,
-                formattedPkg: formattedPkg,
-                loanType: loanType,
-                otherInfo: otherInfo,
-                callCount: callCount,
-                lastStatus: lastStatus,
-                statusKey: statusKey,
-                stageColor: stageColor,
-                stageLabel: stageLabel,
-                stageIcon: stageIcon,
-                leadStage: leadStage,
-                priority: priority,
-              ),
-              const SizedBox(height: 12),
-
-              // Outcomes & Submission - only shown after user taps 'Get Status'
-              if (_showOutcomes) ...[
-                // Structured 2x2 Outcome Card
-                _buildDispositionCard(),
-                const SizedBox(height: 10),
-
-                // If CallBack/Busy is selected or followup is scheduled, show reminder card
-                if (_selectedDisposition == 'CALLBACK_BUSY' || _followupDateTime != null) ...[
-                  _buildFollowupCard(),
-                  const SizedBox(height: 10),
-                ],
-
-                // Telecaller Remarks & Quick Notes Card
-                _buildRemarksCard(),
-                const SizedBox(height: 12),
-
-                // Save & Next Button
-                _buildSaveAndSubmitActions(),
-                const SizedBox(height: 24),
-              ],
-            ],
+          padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 8.0),
+          child: _buildUnifiedCard(
+            name: name,
+            mobile: mobile,
+            company: company,
+            formattedPkg: formattedPkg,
           ),
         ),
       ),
     );
   }
 
-  /// 2. Primary Contact Details Card (Structured table format matching telecaller workflow)
-  Widget _buildContactCard({
+  /// Unified 2-part card exactly reproducing the Telecalling CRM screen from screenshots
+  Widget _buildUnifiedCard({
     required String name,
     required String mobile,
     required String company,
-    required String pkg,
     required String formattedPkg,
-    required String loanType,
-    required String otherInfo,
-    required int callCount,
-    required String lastStatus,
-    required String statusKey,
-    required Color stageColor,
-    required String stageLabel,
-    required IconData stageIcon,
-    required String leadStage,
-    required String priority,
   }) {
-    final total = _leads.length;
-    final current = _currentIndex + 1;
-
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
           ),
         ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Top Accent / Header with Corner Queue Badge
+            // 1. Upper dark charcoal container (#383838) with styled italic cursive text
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: const BoxDecoration(
-                color: Color(0xFFF8FAFC),
-                border: Border(
-                  bottom: BorderSide(color: Color(0xFFE2E8F0), width: 1),
-                ),
-              ),
-              child: Row(
-                children: [
-                  // Lead Stage Tag
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: stageColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: stageColor.withValues(alpha: 0.28)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(stageIcon, size: 12, color: stageColor),
-                        const SizedBox(width: 4),
-                        Text(
-                          stageLabel,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: stageColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Spacer(),
-                  // Top Corner Queue Badge: 'Lead 1 of 15'
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3.5),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFECFDF5),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFFA7F3D0)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.format_list_numbered_rounded, size: 12.5, color: Color(0xFF047857)),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Lead $current of $total',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF047857),
-                          ),
-                        ),
-                        if (_isFetchingMore) ...[
-                          const SizedBox(width: 5),
-                          const SizedBox(
-                            width: 10,
-                            height: 10,
-                            child: CircularProgressIndicator(strokeWidth: 1.5, color: Color(0xFF047857)),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Structured Contact Details Body
-            Padding(
-              padding: const EdgeInsets.all(14.0),
+              color: const Color(0xFF383838),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Structured Key-Value Details (Clean & high-clarity)
-                  _buildContactDetailRow(
+                  _buildInfoRow(
                     label: 'Name:',
                     valueWidget: Text(
                       name.toUpperCase(),
                       style: const TextStyle(
-                        fontSize: 14.5,
+                        fontSize: 16.5,
+                        color: Colors.white,
+                        fontStyle: FontStyle.italic,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF0F172A),
                         letterSpacing: 0.2,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 8),
-
-                  _buildContactDetailRow(
+                  _buildInfoRow(
                     label: 'Mobile:',
                     valueWidget: Row(
                       children: [
                         Text(
                           mobile,
                           style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF1E293B),
-                            letterSpacing: 0.4,
+                            fontSize: 16,
+                            color: Colors.white,
+                            fontStyle: FontStyle.italic,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.5,
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -1054,142 +1298,75 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                               ),
                             );
                           },
-                          borderRadius: BorderRadius.circular(6),
-                          child: Padding(
-                            padding: const EdgeInsets.all(3.0),
-                            child: Icon(Icons.copy_rounded, size: 14, color: Colors.grey.shade600),
-                          ),
+                          child: const Icon(Icons.copy_rounded, size: 14, color: Colors.white60),
                         ),
                       ],
                     ),
                   ),
-
-                  if (company.isNotEmpty && company != 'Individual') ...[
-                    const SizedBox(height: 8),
-                    _buildContactDetailRow(
-                      label: 'Company:',
-                      valueWidget: Text(
-                        company.toUpperCase(),
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFFEA580C),
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  if (formattedPkg.isNotEmpty && formattedPkg != 'General Enquiry') ...[
-                    const SizedBox(height: 8),
-                    _buildContactDetailRow(
-                      label: 'Package:',
-                      valueWidget: Text(
-                        formattedPkg.toUpperCase(),
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF059669),
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  if (loanType.isNotEmpty || (leadStage.isNotEmpty && leadStage != stageLabel)) ...[
-                    const SizedBox(height: 8),
-                    _buildContactDetailRow(
-                      label: 'Type / Stage:',
-                      valueWidget: Text(
-                        [if (loanType.isNotEmpty) loanType, if (leadStage.isNotEmpty && leadStage != stageLabel) leadStage].join(' • '),
-                        style: const TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF475569),
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  if (callCount > 0 || (lastStatus.isNotEmpty && lastStatus != 'Not Called')) ...[
-                    const SizedBox(height: 8),
-                    _buildContactDetailRow(
-                      label: 'History:',
-                      valueWidget: Text(
-                        callCount > 0
-                            ? 'Dialed $callCount time${callCount > 1 ? 's' : ''}${lastStatus.isNotEmpty ? ' ($lastStatus)' : ''}'
-                            : lastStatus,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF64748B),
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  if (otherInfo.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    _buildContactDetailRow(
-                      label: 'Notes:',
-                      valueWidget: RichText(
-                        text: TextSpan(
-                          style: const TextStyle(
-                            fontSize: 12,
-                            height: 1.35,
-                            color: Color(0xFF78350F),
-                            fontWeight: FontWeight.w500,
-                          ),
-                          children: [
-                            TextSpan(
-                              text: (!(_isOtherInfoExpanded) && otherInfo.length > 80)
-                                  ? '${otherInfo.substring(0, 80)}...'
-                                  : otherInfo,
+                  _buildInfoRow(
+                    label: 'Company:',
+                    valueWidget: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            company.isNotEmpty && company != 'Individual' ? company.toUpperCase() : 'INDIVIDUAL',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              color: Color(0xFFFF5252), // Coral red/orange from screenshot
+                              fontStyle: FontStyle.italic,
+                              fontWeight: FontWeight.bold,
                             ),
-                            if (otherInfo.length > 80) ...[
-                              const TextSpan(text: ' '),
-                              WidgetSpan(
-                                alignment: PlaceholderAlignment.middle,
-                                child: GestureDetector(
-                                  onTap: () {
-                                    setState(() {
-                                      _isOtherInfoExpanded = !_isOtherInfoExpanded;
-                                    });
-                                  },
-                                  child: Text(
-                                    _isOtherInfoExpanded ? 'Show Less' : 'Read More',
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFFB45309),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
+                        const SizedBox(width: 4),
+                        const Icon(
+                          Icons.search,
+                          size: 15,
+                          color: Color(0xFFFF5252),
+                        ),
+                      ],
+                    ),
+                  ),
+                  _buildInfoRow(
+                    label: 'Package:',
+                    valueWidget: Text(
+                      formattedPkg.toUpperCase(),
+                      style: const TextStyle(
+                        fontSize: 15.5,
+                        color: Colors.white,
+                        fontStyle: FontStyle.italic,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                  ],
+                  ),
+                ],
+              ),
+            ),
 
-                  const SizedBox(height: 16),
-                  const Divider(height: 1, color: Color(0xFFE2E8F0)),
-                  const SizedBox(height: 14),
-
-                  // 3 Circular Action Buttons Row (WhatsApp, Call History, Call Now)
+            // 2. Lower light silver/grey container (#DFE2E6) with actions & outcomes
+            Container(
+              color: const Color(0xFFDFE2E6),
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Row with 3 circular buttons: Red (SMS/WhatsApp), Slate (History), Green (Call)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      // 1. WhatsApp Button with recognizable WhatsApp icon (52px diameter)
+                      // Red Message / WhatsApp Button (52px diameter)
                       _buildCircularActionButton(
-                        iconWidget: _buildWhatsAppIcon(size: 22),
-                        color: const Color(0xFF25D366),
-                        tooltip: 'Message on WhatsApp',
+                        icon: Icons.message_rounded,
+                        color: const Color(0xFFFF5252),
+                        tooltip: 'Message / WhatsApp',
                         onTap: _whatsappCurrentLead,
                       ),
-                      // 2. Call History Button (52px diameter)
+                      // Slate History Clock Button (52px diameter)
                       _buildCircularActionButton(
                         icon: Icons.history_rounded,
-                        color: const Color(0xFF64748B),
+                        color: const Color(0xFF78909C),
                         tooltip: "Today's Call History",
                         onTap: () {
                           Navigator.of(context).push(
@@ -1202,49 +1379,61 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                           );
                         },
                       ),
-                      // 3. Call Now Button (52px diameter)
+                      // Green Call Button (52px diameter)
                       _buildCircularActionButton(
                         icon: Icons.call_rounded,
-                        color: const Color(0xFF16A34A),
+                        color: const Color(0xFF4CAF50),
                         tooltip: 'Call Now',
                         onTap: _callCurrentLead,
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
 
-                  // Get Status Button (Full Width, Sleek Dark Style matching reference)
+                  // "Get Status" Button (Dark Charcoal #383838)
                   SizedBox(
                     width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton.icon(
+                    height: 46,
+                    child: ElevatedButton(
                       onPressed: _isCheckingCallLog ? null : _onGetStatusTapped,
-                      icon: _isCheckingCallLog
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF383838),
+                        foregroundColor: Colors.white,
+                        elevation: 1,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: _isCheckingCallLog
                           ? const SizedBox(
-                              width: 17,
-                              height: 17,
+                              width: 18,
+                              height: 18,
                               child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                             )
-                          : const Icon(Icons.refresh_rounded, size: 20, color: Colors.white),
-                      label: Text(
-                        _isCheckingCallLog ? 'Getting Status...' : 'Get Status',
-                        style: const TextStyle(
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          letterSpacing: 0.3,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF334155),
-                        foregroundColor: Colors.white,
-                        elevation: 1.5,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
+                          : const Text(
+                              'Get Status',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
                     ),
                   ),
+
+                  // Outcomes & Next - shown after user clicks 'Get Status'
+                  if (_showOutcomes) ...[
+                    const SizedBox(height: 10),
+                    _buildDispositionCard(),
+                    if (_selectedDisposition == 'CALLBACK_BUSY' || _followupDateTime != null) ...[
+                      const SizedBox(height: 10),
+                      _buildFollowupCard(),
+                    ],
+                    const SizedBox(height: 10),
+                    _buildRemarksCard(),
+                    const SizedBox(height: 10),
+                    _buildSaveAndSubmitActions(),
+                  ],
                 ],
               ),
             ),
@@ -1254,43 +1443,29 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     );
   }
 
-  /// Helper row for structured contact details
-  Widget _buildContactDetailRow({
+  /// Helper row for styled handwriting/italic contact details
+  Widget _buildInfoRow({
     required String label,
     required Widget valueWidget,
   }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 82,
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF64748B),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3.5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 85,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 16.5,
+                color: Colors.white,
+                fontStyle: FontStyle.italic,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
-        ),
-        Expanded(child: valueWidget),
-      ],
-    );
-  }
-
-  /// WhatsApp Icon composite widget (Speech bubble with inner rotated phone receiver)
-  Widget _buildWhatsAppIcon({double size = 22}) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Icon(Icons.chat_bubble_rounded, size: size, color: Colors.white),
-          Transform.rotate(
-            angle: -0.22,
-            child: Icon(Icons.call, size: size * 0.52, color: const Color(0xFF25D366)),
-          ),
+          Expanded(child: valueWidget),
         ],
       ),
     );

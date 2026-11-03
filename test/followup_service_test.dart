@@ -52,6 +52,29 @@ void main() {
       expect(FollowupService.instance.getPending().isEmpty, isTrue);
       expect(FollowupService.instance.getCompleted().length, 1);
     });
+
+    test('Follow-up scheduled alerting logic triggers due callback detection at due time', () async {
+      await FollowupService.init();
+
+      final dueTime = DateTime.now().subtract(const Duration(seconds: 10));
+      final dueFollowup = await FollowupService.instance.addFollowup(
+        customerName: 'Anil Sharma',
+        phoneNumber: '9888776655',
+        company: 'Tata Motors',
+        scheduledTime: dueTime,
+        notes: 'Urgent callback needed',
+        leadId: 505,
+      );
+
+      expect(dueFollowup.isOverdue || dueFollowup.isDueNow, isTrue);
+
+      final dueList = FollowupService.instance.getDueNowUnprompted();
+      expect(dueList.any((f) => f.id == dueFollowup.id), isTrue);
+
+      FollowupService.instance.markPromptedInSession(dueFollowup.id);
+      final afterPrompt = FollowupService.instance.getDueNowUnprompted();
+      expect(afterPrompt.any((f) => f.id == dueFollowup.id), isFalse);
+    });
   });
 }
 
