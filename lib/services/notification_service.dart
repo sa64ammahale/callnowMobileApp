@@ -30,6 +30,13 @@ class NotificationService {
 
   static bool _isInitialized = false;
 
+  /// Closes the broadcast stream controller to prevent memory leaks.
+  /// Call this when the app no longer needs notification taps (e.g. app teardown).
+  static void dispose() {
+    _selectNotificationStream.close();
+    _isInitialized = false;
+  }
+
   static Future<void> init() async {
     if (_isInitialized) return;
 

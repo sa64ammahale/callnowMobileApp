@@ -24,7 +24,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0;
-  Timer? _callbackWatchdogTimer;
   StreamSubscription<String?>? _notificationSub;
 
   @override
@@ -32,13 +31,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initCallTracker();
-    _initCallbackWatchdog();
+    // Listen to push notification clicks
+    _notificationSub = NotificationService.onNotificationTap.listen((payload) {
+      if (payload != null && mounted) {
+        _handleNotificationTap(payload);
+      }
+    });
+    // Initial due-callback check after first frame (event-driven, no polling)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkDueCallbacks();
+    });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _checkPermissionsOnResume();
+      // Event-driven due-callback check on app resume (replaces 25s polling)
+      _checkDueCallbacks();
     }
   }
 
@@ -47,25 +57,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!hasPerms && mounted) {
       Navigator.pushReplacementNamed(context, '/permissions');
     }
-  }
-
-  void _initCallbackWatchdog() {
-    // Check every 25 seconds for callbacks due now
-    _callbackWatchdogTimer = Timer.periodic(const Duration(seconds: 25), (_) {
-      _checkDueCallbacks();
-    });
-
-    // Listen to push notification clicks
-    _notificationSub = NotificationService.onNotificationTap.listen((payload) {
-      if (payload != null && mounted) {
-        _handleNotificationTap(payload);
-      }
-    });
-
-    // Initial check after first frame
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkDueCallbacks();
-    });
   }
 
   void _checkDueCallbacks() {
@@ -99,7 +90,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _callbackWatchdogTimer?.cancel();
     _notificationSub?.cancel();
     super.dispose();
   }

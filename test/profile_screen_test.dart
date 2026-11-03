@@ -3,12 +3,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/screens/profile_screen.dart';
 import 'package:callnow_new/services/config_service.dart';
+import 'package:callnow_new/services/secure_storage_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    SecureStorageService.setBackendForTesting(MemorySecureStorageBackend());
     await ConfigService.saveAuthData('mock-token-xyz', {
       'id': 12,
       'name': 'Sangam Telecaller',
@@ -20,6 +22,10 @@ void main() {
       'team_name': 'Inbound Support',
       'department': 'Direct Telecalling',
     });
+  });
+
+  tearDown(() {
+    SecureStorageService.resetBackend();
   });
 
   group('ProfileScreen Widget Tests', () {

@@ -8,13 +8,19 @@ import 'package:callnow_new/model/user_profile.dart';
 import 'package:callnow_new/screens/profile_screen.dart';
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
+import 'package:callnow_new/services/secure_storage_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    SecureStorageService.setBackendForTesting(MemorySecureStorageBackend());
     await ConfigService.init();
+  });
+
+  tearDown(() {
+    SecureStorageService.resetBackend();
   });
 
   group('Goal 1: View and Manage User Info and Profile', () {

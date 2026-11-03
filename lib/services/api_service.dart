@@ -2,14 +2,21 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:callnow_new/services/config_service.dart';
+import 'package:callnow_new/services/secure_http_client.dart';
 import 'package:callnow_new/model/user_profile.dart';
 
 class ApiService {
+  static final http.Client _client = SecureHttpClient(
+    requireHttps: true,
+    enablePinning: SslPinningConfig.enabled,
+  );
+
   static String get _baseUrl {
     String url = ConfigService.baseUrl.trim();
     while (url.endsWith('/')) {
       url = url.substring(0, url.length - 1);
     }
+    requireHttps(url);
     return url;
   }
   static String? get _token => ConfigService.token;
@@ -27,20 +34,15 @@ class ApiService {
   }) async {
     // Try both email and username field names
     final fieldNames = ['email', 'username'];
-    
     for (final fieldName in fieldNames) {
       final url = '$_baseUrl/auth/login';
-      debugPrint('[ApiService] Login request to: $url');
-      debugPrint('[ApiService] Login payload: $fieldName=$email');
 
       final body = {fieldName: email, 'password': password};
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse(url),
         headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
         body: json.encode(body),
       );
-
-      debugPrint('[ApiService] Login response: ${response.statusCode} - ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -63,7 +65,6 @@ class ApiService {
         try {
           final error = json.decode(response.body);
           final msg = error['error']?['message'] ?? error['message'] ?? 'Invalid credentials';
-          debugPrint('[ApiService] 401 Error: $msg (tried field: $fieldName)');
           // If this is the last field name, throw the error
           if (fieldName == fieldNames.last) {
             throw Exception('Login failed: $msg. Tried fields: ${fieldNames.join(', ')}');
@@ -126,12 +127,11 @@ class ApiService {
 
     for (final url in candidateEndpoints) {
       try {
-        final response = await http.get(
+        final response = await _client.get(
           Uri.parse(url),
           headers: _headers,
         );
         lastResponse = response;
-        debugPrint('[ApiService] GET $url -> ${response.statusCode}');
 
         if (response.statusCode == 200) {
           final data = json.decode(response.body);
@@ -195,7 +195,7 @@ class ApiService {
 
     for (final url in endpoints) {
       try {
-        final res = await http.post(
+        final res = await _client.post(
           Uri.parse(url),
           headers: _headers,
           body: body,
@@ -260,7 +260,7 @@ class ApiService {
 
     for (final url in endpoints) {
       try {
-        final res = await http.post(
+        final res = await _client.post(
           Uri.parse(url),
           headers: _headers,
           body: body,
@@ -309,7 +309,7 @@ class ApiService {
       if (photoBase64 != null && photoBase64.isNotEmpty)
         'profile_photo_base64': photoBase64,
     };
-    final response = await http.post(
+    final response = await _client.post(
       Uri.parse('$_baseUrl/auth/profile'),
       headers: _headers,
       body: json.encode(body),
@@ -339,7 +339,7 @@ class ApiService {
     if (currentPassword.isEmpty) throw Exception('Current password is required');
     if (newPassword.length < 6) throw Exception('New password must be at least 6 characters');
     if (newPassword != confirmPassword) throw Exception('Passwords do not match');
-    final response = await http.post(
+    final response = await _client.post(
       Uri.parse('$_baseUrl/auth/change-password'),
       headers: _headers,
       body: json.encode({
@@ -359,7 +359,7 @@ class ApiService {
   }
 
   static Future<void> refreshToken() async {
-    final response = await http.get(
+    final response = await _client.get(
       Uri.parse('$_baseUrl/auth/refresh'),
       headers: _headers,
     );
@@ -381,7 +381,7 @@ class ApiService {
   static Future<void> logout() async {
     try {
       if (_token != null && _token!.isNotEmpty) {
-        await http.post(
+        await _client.post(
           Uri.parse('$_baseUrl/auth/logout'),
           headers: _headers,
         ).timeout(const Duration(seconds: 4));
@@ -401,7 +401,7 @@ class ApiService {
 
   // --- TELECALLER ---
   static Future<Map<String, dynamic>> getDashboardStats() async {
-    final response = await http.get(
+    final response = await _client.get(
       Uri.parse('$_baseUrl/telecaller/dashboard'),
       headers: _headers,
     );
@@ -420,7 +420,7 @@ class ApiService {
 
   /// Fetch a batch of uncalled leads (default 15) from the server
   static Future<List<Map<String, dynamic>>> getBatchLeads({int limit = 15}) async {
-    final response = await http.get(
+    final response = await _client.get(
       Uri.parse('$_baseUrl/telecaller/batch-leads?limit=$limit'),
       headers: _headers,
     );
@@ -448,7 +448,7 @@ class ApiService {
 
   /// Single lead fallback fetch
   static Future<Map<String, dynamic>> getNextCall() async {
-    final response = await http.get(
+    final response = await _client.get(
       Uri.parse('$_baseUrl/telecaller/next-call'),
       headers: _headers,
     );
@@ -495,7 +495,7 @@ class ApiService {
     if (loginBank != null) payload['login_bank_name'] = loginBank;
     if (nextFollowup != null) payload['next_followup_at'] = nextFollowup;
 
-    final response = await http.post(
+    final response = await _client.post(
       Uri.parse('$_baseUrl/telecaller/leads'),
       headers: _headers,
       body: json.encode(payload),
@@ -531,7 +531,7 @@ class ApiService {
     if (source != null && source.isNotEmpty && source != 'all') queryParams['source'] = source;
 
     final uri = Uri.parse('$_baseUrl/telecaller/leads').replace(queryParameters: queryParams);
-    final response = await http.get(uri, headers: _headers);
+    final response = await _client.get(uri, headers: _headers);
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -564,7 +564,7 @@ class ApiService {
     if (otherInfo != null) payload['other_info'] = otherInfo;
     if (status != null) payload['status'] = status;
 
-    final response = await http.put(
+    final response = await _client.put(
       Uri.parse('$_baseUrl/telecaller/leads/$id?source=$source'),
       headers: _headers,
       body: json.encode(payload),
@@ -592,7 +592,7 @@ class ApiService {
     if (nextFollowupAt != null) payload['next_followup'] = nextFollowupAt;
 
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('$_baseUrl/telecaller/leads/$id/stage'),
         headers: _headers,
         body: json.encode(payload),
@@ -623,7 +623,7 @@ class ApiService {
 
     final uri = Uri.parse('$_baseUrl/telecaller/reports/summary')
         .replace(queryParameters: queryParams);
-    final response = await http.get(uri, headers: _headers);
+    final response = await _client.get(uri, headers: _headers);
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -662,7 +662,7 @@ class ApiService {
     if (search != null && search.isNotEmpty) queryParams['search'] = search;
 
     final uri = Uri.parse('$_baseUrl/telecaller/calls').replace(queryParameters: queryParams);
-    final response = await http.get(uri, headers: _headers);
+    final response = await _client.get(uri, headers: _headers);
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -682,7 +682,7 @@ class ApiService {
   }) async {
     final uri = Uri.parse('$_baseUrl/telecaller/call-history/$recordId')
         .replace(queryParameters: {'source': source});
-    final response = await http.get(uri, headers: _headers);
+    final response = await _client.get(uri, headers: _headers);
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -719,7 +719,7 @@ class ApiService {
     if (callStartTime != null) body['call_start_time'] = callStartTime;
     if (callEndTime != null) body['call_end_time'] = callEndTime;
 
-    final response = await http.post(
+    final response = await _client.post(
       Uri.parse('$_baseUrl/telecaller/calls/$callId/complete'),
       headers: _headers,
       body: json.encode(body),
@@ -756,7 +756,7 @@ class ApiService {
     if (nextFollowup != null) body['next_followup'] = nextFollowup;
     if (recordingUrl != null) body['recording_url'] = recordingUrl;
 
-    final response = await http.post(
+    final response = await _client.post(
       Uri.parse('$_baseUrl/telecaller/submit_call.php'),
       headers: _headers,
       body: json.encode(body),
@@ -776,7 +776,7 @@ class ApiService {
 
   // --- ADMIN (optional) ---
   static Future<Map<String, dynamic>> getAdminSettings() async {
-    final response = await http.get(
+    final response = await _client.get(
       Uri.parse('$_baseUrl/admin/settings'),
       headers: _headers,
     );

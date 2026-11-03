@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/model/user_profile.dart';
+import 'package:callnow_new/services/secure_storage_service.dart';
 
 class ConfigService {
   static const String _baseUrlKey = 'base_url';
-  static const String _tokenKey = 'auth_token';
   static const String _userDataKey = 'user_data';
   static const String _defaultBaseUrl =
       'https://callnow.increditsolutions.in/api/v1';
@@ -18,7 +18,7 @@ class ConfigService {
     if (_initialized) return;
     final prefs = await SharedPreferences.getInstance();
     _cachedBaseUrl = prefs.getString(_baseUrlKey) ?? _defaultBaseUrl;
-    _cachedToken = prefs.getString(_tokenKey);
+    _cachedToken = await SecureStorageService.instance.readToken();
     final userDataStr = prefs.getString(_userDataKey);
     if (userDataStr != null) {
       try {
@@ -210,7 +210,20 @@ class ConfigService {
       merged.putIfAbsent('username', () => prefix);
     }
 
-    await prefs.setString(_tokenKey, token);
+    await SecureStorageService.instance.writeToken(token);
+    // Sync sensitive PII to encrypted secure storage
+    if (merged['email'] != null && merged['email'].toString().isNotEmpty) {
+      await SecureStorageService.instance.writeEmail(merged['email'].toString());
+    }
+    if (merged['phone'] != null && merged['phone'].toString().isNotEmpty) {
+      await SecureStorageService.instance.writePhone(merged['phone'].toString());
+    }
+    if (merged['name'] != null && merged['name'].toString().isNotEmpty) {
+      await SecureStorageService.instance.writeName(merged['name'].toString());
+    }
+    if (merged['id'] != null) {
+      await SecureStorageService.instance.writeUserId(merged['id'].toString());
+    }
     await prefs.setString(_userDataKey, json.encode(merged));
     _cachedToken = token;
     _cachedUserData = merged;
@@ -218,7 +231,7 @@ class ConfigService {
 
   static Future<void> clearAuthData() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_tokenKey);
+    await SecureStorageService.instance.clearAll();
     await prefs.remove(_userDataKey);
     _cachedToken = null;
     _cachedUserData = null;

@@ -595,15 +595,16 @@ class _FollowUpScreenState extends State<FollowUpScreen>
       badgeColor = const Color(0xFFD97706);
     }
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: cardBorderColor),
-      ),
-      color: Colors.white,
-      child: Padding(
+    return RepaintBoundary(
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 10),
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: cardBorderColor),
+        ),
+        color: Colors.white,
+        child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -783,7 +784,8 @@ class _FollowUpScreenState extends State<FollowUpScreen>
           ],
         ),
       ),
-    );
+    ),
+  );
   }
 }
 

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:callnow_new/model/user_profile.dart';
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/screens/profile_screen.dart';
+import 'package:callnow_new/services/secure_storage_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -12,7 +13,12 @@ void main() {
     SharedPreferences.setMockInitialValues({
       'base_url': 'http://192.168.1.100/callnowCRM/api/v1',
     });
+    SecureStorageService.setBackendForTesting(MemorySecureStorageBackend());
     await ConfigService.init();
+  });
+
+  tearDown(() {
+    SecureStorageService.resetBackend();
   });
 
   group('UserProfile Photo Reference Tests', () {

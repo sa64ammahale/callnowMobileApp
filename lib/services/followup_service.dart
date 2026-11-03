@@ -14,10 +14,72 @@ class FollowupService extends ChangeNotifier {
   final List<FollowupModel> _followups = [];
   final Set<String> _promptedIdsInSession = {};
 
+  // Cached derived lists — invalidated on any mutation
+  List<FollowupModel>? _cachedSorted;
+  List<FollowupModel>? _cachedPending;
+  List<FollowupModel>? _cachedOverdue;
+  List<FollowupModel>? _cachedToday;
+  List<FollowupModel>? _cachedUpcoming;
+  List<FollowupModel>? _cachedCompleted;
+  bool _cacheDirty = true;
+
+  /// Maximum completed follow-ups retained in memory before auto-purge.
+  static const int _maxCompletedRetained = 500;
+
   List<FollowupModel> get followups {
-    final list = List<FollowupModel>.from(_followups);
-    list.sort((a, b) => a.scheduledTime.compareTo(b.scheduledTime));
-    return list;
+    if (_cacheDirty) _rebuildCaches();
+    return _cachedSorted!;
+  }
+
+  List<FollowupModel> getPending() {
+    if (_cacheDirty) _rebuildCaches();
+    return _cachedPending!;
+  }
+
+  List<FollowupModel> getOverdue() {
+    if (_cacheDirty) _rebuildCaches();
+    return _cachedOverdue!;
+  }
+
+  List<FollowupModel> getToday() {
+    if (_cacheDirty) _rebuildCaches();
+    return _cachedToday!;
+  }
+
+  List<FollowupModel> getUpcoming() {
+    if (_cacheDirty) _rebuildCaches();
+    return _cachedUpcoming!;
+  }
+
+  List<FollowupModel> getCompleted() {
+    if (_cacheDirty) _rebuildCaches();
+    return _cachedCompleted!;
+  }
+
+  void _rebuildCaches() {
+    _cachedSorted = List<FollowupModel>.from(_followups)
+      ..sort((a, b) => a.scheduledTime.compareTo(b.scheduledTime));
+    _cachedPending = _followups
+        .where((f) => f.status == 'pending' || f.status == 'snoozed')
+        .toList();
+    _cachedOverdue = _followups.where((f) => f.isOverdue).toList();
+    final now = DateTime.now();
+    _cachedToday = _followups
+        .where((f) =>
+            (f.status == 'pending' || f.status == 'snoozed') && f.isToday)
+        .toList();
+    _cachedUpcoming = _followups
+        .where((f) =>
+            (f.status == 'pending' || f.status == 'snoozed') &&
+            f.scheduledTime.isAfter(now) &&
+            !f.isToday)
+        .toList();
+    _cachedCompleted = _followups.where((f) => f.status == 'completed').toList();
+    _cacheDirty = false;
+
+    // Prune prompted session set against live follow-up IDs to prevent leak
+    _promptedIdsInSession.retainWhere(
+        (id) => _followups.any((f) => f.id == id));
   }
 
   static Future<void> init() async {
@@ -37,6 +99,8 @@ class FollowupService extends ChangeNotifier {
           }
         }
       }
+      _cacheDirty = true;
+      _rebuildCaches();
       notifyListeners();
     } catch (e) {
       debugPrint('Error loading followups: $e');
@@ -52,36 +116,6 @@ class FollowupService extends ChangeNotifier {
     } catch (e) {
       debugPrint('Error saving followups: $e');
     }
-  }
-
-  List<FollowupModel> getPending() {
-    return followups
-        .where((f) => f.status == 'pending' || f.status == 'snoozed')
-        .toList();
-  }
-
-  List<FollowupModel> getOverdue() {
-    return followups.where((f) => f.isOverdue).toList();
-  }
-
-  List<FollowupModel> getToday() {
-    return followups
-        .where((f) => (f.status == 'pending' || f.status == 'snoozed') && f.isToday)
-        .toList();
-  }
-
-  List<FollowupModel> getUpcoming() {
-    final now = DateTime.now();
-    return followups
-        .where((f) =>
-            (f.status == 'pending' || f.status == 'snoozed') &&
-            f.scheduledTime.isAfter(now) &&
-            !f.isToday)
-        .toList();
-  }
-
-  List<FollowupModel> getCompleted() {
-    return followups.where((f) => f.status == 'completed').toList();
   }
 
   Future<FollowupModel> addFollowup({
@@ -108,6 +142,7 @@ class FollowupService extends ChangeNotifier {
     );
 
     _followups.add(model);
+    _cacheDirty = true;
     await _saveToPrefs();
 
     // Schedule exact notification
@@ -132,6 +167,7 @@ class FollowupService extends ChangeNotifier {
     );
 
     _followups[index] = updated;
+    _cacheDirty = true;
     await _saveToPrefs();
 
     await NotificationService.cancelFollowupNotification(id);
@@ -159,6 +195,7 @@ class FollowupService extends ChangeNotifier {
     );
 
     _followups[index] = updated;
+    _cacheDirty = true;
     await _saveToPrefs();
 
     await NotificationService.cancelFollowupNotification(id);
@@ -180,26 +217,64 @@ class FollowupService extends ChangeNotifier {
     );
 
     _followups[index] = updated;
+    _cacheDirty = true;
     await _saveToPrefs();
 
     await NotificationService.cancelFollowupNotification(id);
-    _promptedIdsInSession.add(id);
+    _promptedIdsInSession.remove(id);
+
+    _purgeCompletedIfNeeded();
 
     notifyListeners();
   }
 
   Future<void> deleteFollowup(String id) async {
     _followups.removeWhere((f) => f.id == id);
+    _cacheDirty = true;
     await _saveToPrefs();
     await NotificationService.cancelFollowupNotification(id);
     _promptedIdsInSession.remove(id);
     notifyListeners();
   }
 
+  /// Removes completed follow-ups older than [olderThan] to bound memory growth.
+  Future<void> purgeCompletedOlderThan(Duration olderThan) async {
+    final cutoff = DateTime.now().subtract(olderThan);
+    final toRemove = <String>[];
+    for (final f in _followups) {
+      if (f.status == 'completed' &&
+          f.completedAt != null &&
+          f.completedAt!.isBefore(cutoff)) {
+        toRemove.add(f.id);
+      }
+    }
+    for (final id in toRemove) {
+      await deleteFollowup(id);
+    }
+  }
+
+  /// Keeps completed follow-ups bounded so the singleton does not grow forever.
+  Future<void> _purgeCompletedIfNeeded() async {
+    final completedCount = _followups.where((f) => f.status == 'completed').length;
+    if (completedCount <= _maxCompletedRetained) return;
+    // Remove oldest completed entries first.
+    final completed = _followups
+        .where((f) => f.status == 'completed')
+        .toList()
+      ..sort((a, b) =>
+            (a.completedAt ?? a.createdAt)
+                .compareTo(b.completedAt ?? b.createdAt));
+    final toRemove = completed.take(completedCount - _maxCompletedRetained);
+    for (final f in toRemove) {
+      await deleteFollowup(f.id);
+    }
+  }
+
   /// Returns pending follow-ups that are currently due now and have not
   /// been prompted yet to the user in this app session.
   List<FollowupModel> getDueNowUnprompted() {
-    final due = getPending().where((f) {
+    if (_cacheDirty) _rebuildCaches();
+    final due = _cachedPending!.where((f) {
       if (_promptedIdsInSession.contains(f.id)) return false;
       return f.isDueNow || f.isOverdue;
     }).toList();
@@ -210,4 +285,3 @@ class FollowupService extends ChangeNotifier {
     _promptedIdsInSession.add(id);
   }
 }
-

@@ -232,6 +232,47 @@ class _PermissionScreenState extends State<PermissionScreen>
                           ),
                         ),
 
+                      // READ_CALL_LOG restricted-permission degradation notice
+                      if (report != null && report.isCallLogRestricted && allGranted == false)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF3E8FF),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFF8B5CF6)),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.error_outline, color: Color(0xFF7C3AED), size: 22),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Call Log access restricted',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                        color: Color(0xFF7C3AED),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'READ_CALL_LOG is a restricted permission on Android 10+. '
+                                      'Call duration logging will be estimated until the permission is granted via '
+                                      'Play Store approval or device settings.',
+                                      style: TextStyle(fontSize: 12, color: Color(0xFF6B21A8), height: 1.3),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
                       // 1. Phone State Permission Tile
                       _buildPermissionTile(
                         icon: Icons.phone_in_talk_rounded,

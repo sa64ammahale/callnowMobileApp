@@ -7,12 +7,14 @@ import 'package:callnow_new/screens/followup_screen.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
+import 'package:callnow_new/services/secure_storage_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    SecureStorageService.setBackendForTesting(MemorySecureStorageBackend());
     await ConfigService.saveAuthData('dummy_mock_jwt_token_for_testing', {
       'id': 101,
       'name': 'Rajesh Kumar',
@@ -26,6 +28,10 @@ void main() {
       'join_date': '2023-01-15',
     });
     await FollowupService.init();
+  });
+
+  tearDown(() {
+    SecureStorageService.resetBackend();
   });
 
   Widget createHardenedTestApp({

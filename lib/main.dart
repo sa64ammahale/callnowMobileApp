@@ -18,9 +18,11 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await ConfigService.init();
-  await NotificationService.init();
-  await FollowupService.init();
+  await Future.wait([
+    ConfigService.init(),
+    NotificationService.init(),
+    FollowupService.init(),
+  ]);
   runApp(const MyApp());
 }
 

@@ -2,18 +2,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/whatsapp_message_service.dart';
+import 'package:callnow_new/services/secure_storage_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    SecureStorageService.setBackendForTesting(MemorySecureStorageBackend());
     await ConfigService.saveAuthData('test-token', {
       'name': 'Taylor Agent',
       'role': 'Telecaller',
       'company': 'CallNow Finance',
       'mobile': '9876543210',
     });
+  });
+
+  tearDown(() {
+    SecureStorageService.resetBackend();
   });
 
   test('uses the default template until a custom one is saved', () async {

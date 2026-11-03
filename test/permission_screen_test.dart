@@ -4,18 +4,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/screens/permission_screen.dart';
 import 'package:callnow_new/services/permission_service.dart';
 import 'package:callnow_new/services/config_service.dart';
+import 'package:callnow_new/services/secure_storage_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    SecureStorageService.setBackendForTesting(MemorySecureStorageBackend());
     await ConfigService.init();
     await ConfigService.clearAuthData();
   });
 
   tearDown(() {
     PermissionService.mockReport = null;
+    SecureStorageService.resetBackend();
   });
 
   group('PermissionScreen Widget Tests', () {

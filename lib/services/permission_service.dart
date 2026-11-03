@@ -19,6 +19,10 @@ class PermissionStatusReport {
 
   bool get allGranted => phoneState && callLog && callPhone && notifications;
 
+  /// Whether READ_CALL_LOG is specifically denied/restricted.
+  /// On Android 10+ this is a restricted permission requiring Play Store approval.
+  bool get isCallLogRestricted => !callLog;
+
   int get grantedCount {
     int count = 0;
     if (phoneState) count++;
@@ -95,6 +99,19 @@ class PermissionService {
   static Future<bool> hasAllPermissions() async {
     final report = await checkAllPermissions();
     return report.allGranted;
+  }
+
+  /// Whether READ_CALL_LOG specifically is denied/restricted.
+  /// Helpful for UI degradation: call-log verification becomes best-effort.
+  static Future<bool> isReadCallLogRestricted() async {
+    if (kIsWeb || !Platform.isAndroid) return false;
+    if (mockReport != null) return !mockReport!.callLog;
+    try {
+      final details = await PhoneStateBackground.checkPermissionDetails();
+      return details['call_log'] != true;
+    } catch (_) {
+      return true;
+    }
   }
 
   /// Request all ungranted permissions in a gentle sequence

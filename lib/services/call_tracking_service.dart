@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/permission_service.dart';
+import 'package:callnow_new/services/secure_http_client.dart';
 
 /// Model representing verified Android CallLog entry for a dialed number
 class VerifiedCallLog {
@@ -153,6 +154,11 @@ Future<void> phoneStateBackgroundCallbackHandler(
 }
 
 class CallTrackingService {
+  static final http.Client _httpClient = SecureHttpClient(
+    requireHttps: true,
+    enablePinning: SslPinningConfig.enabled,
+  );
+
   static final ValueNotifier<bool> isTrackingActive = ValueNotifier<bool>(false);
   static final ValueNotifier<String> lastCallEvent =
       ValueNotifier<String>('Waiting for call activity...');
@@ -269,7 +275,7 @@ class CallTrackingService {
       // We'll use the phone number as record_id for temporary records, 
       // or we can search for the record first
       
-      final response = await http.post(
+      final response = await _httpClient.post(
         Uri.parse('$baseUrl/telecaller/submit_call.php'),
         headers: {
           'Content-Type': 'application/json',
@@ -321,7 +327,7 @@ class CallTrackingService {
       final src = source ?? _determineSource(number);
       final rid = recordId ?? int.tryParse(number.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
 
-      final response = await http.post(
+      final response = await _httpClient.post(
         Uri.parse('$baseUrl/telecaller/submit_call.php'),
         headers: {
           'Content-Type': 'application/json',
