@@ -11,8 +11,6 @@ import android.net.Uri
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
-import androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale
-import androidx.core.app.ActivityCompat.startActivityForResult
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.FlutterPlugin.FlutterPluginBinding
@@ -32,9 +30,6 @@ class PhoneStateBackgroundPlugin : FlutterPlugin, MethodCallHandler, ActivityAwa
     const val CALLBACK_USER_SHAREDPREFERENCES_KEY = "phoneStateBackgroundCallbackHandlerUser"
   }
 
-  /// The MethodChannel that will the communication between Flutter and native Android
-  /// This local reference serves to register the plugin with the Flutter Engine and unregister it
-  /// when the Flutter Engine is detached from the Activity
   private var channel: MethodChannel? = null
   private var currentActivity: Activity? = null
 
@@ -62,9 +57,10 @@ class PhoneStateBackgroundPlugin : FlutterPlugin, MethodCallHandler, ActivityAwa
 
       val context = currentActivity!!.applicationContext
       val receiver = ComponentName(context, PhoneStateBackgroundServiceReceiver::class.java)
-      context.packageManager.setComponentEnabledSetting(receiver,
-              PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-              PackageManager.DONT_KILL_APP
+      context.packageManager.setComponentEnabledSetting(
+        receiver,
+        PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+        PackageManager.DONT_KILL_APP
       )
       Log.d(PLUGIN_NAME, "Service initialized...")
       result.success(true)
@@ -76,21 +72,53 @@ class PhoneStateBackgroundPlugin : FlutterPlugin, MethodCallHandler, ActivityAwa
       editor.remove(CALLBACK_USER_SHAREDPREFERENCES_KEY)
       val context: Context = currentActivity!!.applicationContext
       val receiver = ComponentName(context, PhoneStateBackgroundServiceReceiver::class.java)
-        context.packageManager.setComponentEnabledSetting(receiver,
-              PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-              PackageManager.DONT_KILL_APP
+      context.packageManager.setComponentEnabledSetting(
+        receiver,
+        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+        PackageManager.DONT_KILL_APP
       )
       editor.commit()
       result.success(true)
 
     } else if (call.method == "requestPermissions") {
-      Log.d(PLUGIN_NAME, "Requesting permission...")
-      requestPermissions()
+      Log.d(PLUGIN_NAME, "Requesting permissions via standard Android dialog...")
+      requestPermissions(result)
 
     } else if (call.method == "checkPermissions") {
       val check = doCheckPermission()
       Log.d(PLUGIN_NAME, "Permission checked: $check")
       result.success(check)
+
+    } else if (call.method == "checkPermissionDetails") {
+      val details = HashMap<String, Boolean>()
+      if (currentActivity != null) {
+        val grantedCode = PackageManager.PERMISSION_GRANTED
+        details["phone_state"] = ContextCompat.checkSelfPermission(currentActivity!!, Manifest.permission.READ_PHONE_STATE) == grantedCode
+        details["call_log"] = ContextCompat.checkSelfPermission(currentActivity!!, Manifest.permission.READ_CALL_LOG) == grantedCode
+        details["call_phone"] = ContextCompat.checkSelfPermission(currentActivity!!, Manifest.permission.CALL_PHONE) == grantedCode
+      } else {
+        details["phone_state"] = false
+        details["call_log"] = false
+        details["call_phone"] = false
+      }
+      result.success(details)
+
+    } else if (call.method == "openAppSettings") {
+      if (currentActivity != null) {
+        try {
+          val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", currentActivity!!.packageName, null)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+          }
+          currentActivity!!.startActivity(intent)
+          result.success(true)
+        } catch (e: Exception) {
+          Log.e(PLUGIN_NAME, "Error opening app settings: ${e.message}")
+          result.success(false)
+        }
+      } else {
+        result.success(false)
+      }
 
     } else {
       result.notImplemented()
@@ -105,62 +133,48 @@ class PhoneStateBackgroundPlugin : FlutterPlugin, MethodCallHandler, ActivityAwa
     if (currentActivity != null && currentActivity!!.applicationContext != null) {
       val permPhoneState = ContextCompat.checkSelfPermission(currentActivity!!, Manifest.permission.READ_PHONE_STATE)
       val permReadCallLog = ContextCompat.checkSelfPermission(currentActivity!!, Manifest.permission.READ_CALL_LOG)
+      val permCallPhone = ContextCompat.checkSelfPermission(currentActivity!!, Manifest.permission.CALL_PHONE)
       val grantedCode = PackageManager.PERMISSION_GRANTED
-      return permPhoneState == grantedCode && permReadCallLog == grantedCode
+      return permPhoneState == grantedCode && permReadCallLog == grantedCode && permCallPhone == grantedCode
     }
     return false
   }
 
-  private fun requestPermissions() {
-    if (currentActivity?.applicationContext == null)
-      return;
+  private fun requestPermissions(result: Result? = null) {
+    if (currentActivity == null) {
+      result?.success(false)
+      return
+    }
 
     val grantedCode = PackageManager.PERMISSION_GRANTED
-
     val permissions = arrayOf(
       Manifest.permission.READ_PHONE_STATE,
-      Manifest.permission.READ_CALL_LOG
+      Manifest.permission.READ_CALL_LOG,
+      Manifest.permission.CALL_PHONE
     )
     val permissionsToAsk = arrayListOf<String>()
-    var shouldOpenSettings = false
 
     for (permission in permissions) {
       val permState = ContextCompat.checkSelfPermission(currentActivity!!, permission)
-
-      if (permState == grantedCode)
-        continue
-
-      val shouldShowRequest = shouldShowRequestPermissionRationale(currentActivity!!, permission)
-
-      if (!shouldShowRequest) {
-        // User previously denied with "Don't ask again" - need to open settings
-        shouldOpenSettings = true
-      } else {
+      if (permState != grantedCode) {
         permissionsToAsk.add(permission)
       }
     }
 
-    if (shouldOpenSettings) {
-      val intent = Intent()
-      intent.action = Settings.ACTION_APPLICATION_DETAILS_SETTINGS
-      val uri = Uri.fromParts("package", currentActivity!!.packageName, null)
-      intent.data = uri
-      currentActivity!!.startActivity(intent)
-    } else if (permissionsToAsk.isNotEmpty()) {
+    if (permissionsToAsk.isNotEmpty()) {
       ActivityCompat.requestPermissions(currentActivity!!, permissionsToAsk.toTypedArray(), 999)
     }
+    result?.success(permissionsToAsk.isEmpty())
   }
 
   override fun onAttachedToActivity(binding: ActivityPluginBinding) {
     currentActivity = binding.activity
-    //binding.addRequestPermissionsResultListener(this)
-    //requestPermissions()
+    binding.addRequestPermissionsResultListener(this)
   }
 
   override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
     currentActivity = binding.activity
-    //binding.addRequestPermissionsResultListener(this)
-    //requestPermissions()
+    binding.addRequestPermissionsResultListener(this)
   }
 
   override fun onDetachedFromActivityForConfigChanges() {
@@ -173,7 +187,7 @@ class PhoneStateBackgroundPlugin : FlutterPlugin, MethodCallHandler, ActivityAwa
 
   override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray): Boolean {
     return when (requestCode) {
-      999 -> grantResults != null && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+      999 -> grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
       else -> false
     }
   }

@@ -7,6 +7,7 @@ import 'package:phone_state_background/phone_state_background.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/services/config_service.dart';
+import 'package:callnow_new/services/permission_service.dart';
 
 /// Model representing verified Android CallLog entry for a dialed number
 class VerifiedCallLog {
@@ -200,23 +201,13 @@ class CallTrackingService {
 
   /// Check if the required Android permissions (READ_PHONE_STATE, READ_CALL_LOG) are granted
   static Future<bool> checkPermission() async {
-    try {
-      return await PhoneStateBackground.checkPermission();
-    } catch (e) {
-      log('[CallTracker] checkPermission error: $e');
-      return false;
-    }
+    return await PermissionService.hasAllPermissions();
   }
 
   /// Request required Android permissions
   static Future<bool> requestPermissions() async {
-    try {
-      await PhoneStateBackground.requestPermissions();
-      return await checkPermission();
-    } catch (e) {
-      log('[CallTracker] requestPermissions error: $e');
-      return false;
-    }
+    final report = await PermissionService.requestAllPermissions();
+    return report.allGranted;
   }
 
   /// Initialize the background listener service
@@ -232,6 +223,11 @@ class CallTrackingService {
         log('[CallTracker] Permissions not granted. Cannot initialize call tracker.');
         isTrackingActive.value = false;
         return false;
+      }
+
+      if (PermissionService.isMockActive || kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+        isTrackingActive.value = true;
+        return true;
       }
 
       await PhoneStateBackground.initialize(phoneStateBackgroundCallbackHandler);

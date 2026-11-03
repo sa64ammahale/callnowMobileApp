@@ -10,6 +10,7 @@ import 'package:callnow_new/screens/calling_desk_screen.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/screens/leads_screen.dart';
 import 'package:callnow_new/screens/followup_screen.dart';
+import 'package:callnow_new/screens/permission_screen.dart';
 import 'package:callnow_new/services/notification_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
 
@@ -155,6 +156,7 @@ class MyApp extends StatelessWidget {
         '/settings': (context) => const SettingsScreen(),
         '/profile': (context) => const ProfileScreen(),
         '/followups': (context) => const FollowUpScreen(),
+        '/permissions': (context) => const PermissionScreen(),
       },
       debugShowCheckedModeBanner: false,
     );

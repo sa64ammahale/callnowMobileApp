@@ -7,6 +7,7 @@ import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
 import 'package:callnow_new/services/notification_service.dart';
+import 'package:callnow_new/services/permission_service.dart';
 import 'package:callnow_new/widgets/callback_alert_dialog.dart';
 import 'package:callnow_new/screens/calling_desk_screen.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
@@ -21,7 +22,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   Timer? _callbackWatchdogTimer;
   StreamSubscription<String?>? _notificationSub;
@@ -29,8 +30,23 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initCallTracker();
     _initCallbackWatchdog();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkPermissionsOnResume();
+    }
+  }
+
+  Future<void> _checkPermissionsOnResume() async {
+    final hasPerms = await PermissionService.hasAllPermissions();
+    if (!hasPerms && mounted) {
+      Navigator.pushReplacementNamed(context, '/permissions');
+    }
   }
 
   void _initCallbackWatchdog() {
@@ -82,12 +98,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _callbackWatchdogTimer?.cancel();
     _notificationSub?.cancel();
     super.dispose();
   }
 
   Future<void> _initCallTracker() async {
+    final hasPerms = await PermissionService.hasAllPermissions();
+    if (!hasPerms) {
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/permissions');
+      }
+      return;
+    }
     final success = await CallTrackingService.initialize();
     if (mounted && !success) {
       ScaffoldMessenger.of(context).showSnackBar(

@@ -56,6 +56,11 @@ class ConfigService {
 
   static UserProfile get userProfile => UserProfile.fromJson(_cachedUserData ?? {});
 
+  static String? get userProfilePhotoUrl {
+    if (_cachedUserData == null) return null;
+    return userProfile.profilePhotoUrl;
+  }
+
   static bool get isLoggedIn => _cachedToken != null;
 
   static String get userDisplayName {

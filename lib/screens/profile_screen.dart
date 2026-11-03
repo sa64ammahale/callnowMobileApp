@@ -535,8 +535,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               backgroundColor: Colors.white,
                               backgroundImage: (profile.profilePhotoUrl != null && profile.profilePhotoUrl!.isNotEmpty)
                                   ? NetworkImage(profile.profilePhotoUrl!)
+                                  : profile.avatarImageProvider,
+                              onBackgroundImageError: (profile.profilePhotoUrl != null || profile.avatarImageProvider != null)
+                                  ? (exception, stackTrace) {
+                                      debugPrint('[ProfileScreen] Avatar image load error: $exception');
+                                    }
                                   : null,
-                              child: (profile.profilePhotoUrl == null || profile.profilePhotoUrl!.isEmpty)
+                              child: (profile.profilePhotoUrl == null && profile.avatarImageProvider == null)
                                   ? Text(
                                       displayName.trim().isNotEmpty ? displayName.trim()[0].toUpperCase() : 'A',
                                       style: const TextStyle(

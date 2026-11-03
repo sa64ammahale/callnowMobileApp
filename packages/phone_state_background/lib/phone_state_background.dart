@@ -36,18 +36,41 @@ class PhoneStateBackground {
   }
 
   /// Prompt the user to grant permission for the events needed for this plugin
-  /// to work, `READ_PHONE_STATE` and `READ_CALL_LOG`
+  /// to work, `READ_PHONE_STATE`, `READ_CALL_LOG`, and `CALL_PHONE`
   static Future<void> requestPermissions() async {
     await _channel.invokeMethod('requestPermissions');
   }
 
-  /// Check if the user has granted permission for `READ_PHONE_STATE` and `READ_CALL_LOG`
+  /// Check if the user has granted permission for `READ_PHONE_STATE`, `READ_CALL_LOG`, and `CALL_PHONE`
   ///
   /// The future will always be resolved with a value, there's no need to wrap
   /// this method in a `try/catch` block
   static Future<bool> checkPermission() async {
     try {
       final res = await _channel.invokeMethod('checkPermissions');
+      return res == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Check granular status of each phone permission
+  static Future<Map<String, bool>> checkPermissionDetails() async {
+    try {
+      final res = await _channel.invokeMethod('checkPermissionDetails');
+      if (res is Map) {
+        return Map<String, bool>.from(res);
+      }
+      return {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Open device application settings screen
+  static Future<bool> openAppSettings() async {
+    try {
+      final res = await _channel.invokeMethod('openAppSettings');
       return res == true;
     } catch (_) {
       return false;
@@ -101,22 +124,18 @@ void _callbackDispatcher() {
         event = PhoneStateBackgroundEvent.incomingend;
         break;
 
-      /// Indicates an outgoing call start.
-      case 'OUTGOINGEND':
-        event = PhoneStateBackgroundEvent.outgoingend;
-        break;
-
-      ///	Indicates an outgoing call end.
+      ///	Indicates an outgoing call start.
       case 'OUTGOINGSTART':
         event = PhoneStateBackgroundEvent.outgoingstart;
         break;
 
-      /// Unkown event
-      default:
-        throw Exception('Unkown event name');
+      ///	Indicates an outgoing call end.
+      case 'OUTGOINGEND':
+        event = PhoneStateBackgroundEvent.outgoingend;
+        break;
     }
 
-    //Invoke callback.
-    userCallback?.call(event, args.elementAt(4), args.elementAt(3));
+    userCallback?.call(event, args.elementAt(3), args.elementAt(4));
   });
+  backgroundChannel.invokeMethod('initialized');
 }

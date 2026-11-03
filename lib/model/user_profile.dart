@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:callnow_new/services/config_service.dart';
+
 class UserProfile {
   final int id;
   final String name;
@@ -9,7 +13,11 @@ class UserProfile {
   final String teamName;
   final String department;
   final String joinDate;
+  final String? profilePhoto;
   final String? profilePhotoUrl;
+  final String? avatarUrl;
+  final String? profilePicture;
+  final String? profilePictureUrl;
 
   UserProfile({
     required this.id,
@@ -22,7 +30,11 @@ class UserProfile {
     required this.teamName,
     required this.department,
     required this.joinDate,
+    this.profilePhoto,
     this.profilePhotoUrl,
+    this.avatarUrl,
+    this.profilePicture,
+    this.profilePictureUrl,
   });
 
   static String _extractString(dynamic val) {
@@ -111,9 +123,55 @@ class UserProfile {
     if (joinDate.isEmpty) joinDate = _extractString(user['created_at']);
     if (joinDate.isEmpty) joinDate = _extractString(user['registered_at']);
 
-    // Profile photo url
-    final photo = _extractString(user['profile_photo_url']);
-    final photoUrl = photo.isNotEmpty ? photo : null;
+    // Profile photo mappings
+    final rawPhoto = _extractString(user['profile_photo']);
+    String photoUrlStr = _extractString(user['profile_photo_url']);
+    if (photoUrlStr.isEmpty) photoUrlStr = _extractString(user['avatar_url']);
+    if (photoUrlStr.isEmpty) photoUrlStr = _extractString(user['profile_picture_url']);
+    if (photoUrlStr.isEmpty) photoUrlStr = _extractString(user['photo']);
+
+    final avatarUrlStr = _extractString(user['avatar_url']).isNotEmpty
+        ? _extractString(user['avatar_url'])
+        : (photoUrlStr.isNotEmpty ? photoUrlStr : null);
+
+    final picUrlStr = _extractString(user['profile_picture_url']).isNotEmpty
+        ? _extractString(user['profile_picture_url'])
+        : (photoUrlStr.isNotEmpty ? photoUrlStr : null);
+
+    final profilePicture = _extractString(user['profile_picture']).isNotEmpty
+        ? _extractString(user['profile_picture'])
+        : null;
+
+    // Normalization of photo URL if relative (e.g. /uploads/... or /callnowCRM/uploads/...)
+    if (photoUrlStr.isNotEmpty && photoUrlStr.startsWith('/') && !photoUrlStr.startsWith('//')) {
+      final base = ConfigService.baseUrl.replaceAll(RegExp(r'/api.*'), '').replaceAll(RegExp(r'/+$'), '');
+      if (base.isNotEmpty) {
+        final baseUri = Uri.tryParse(base);
+        if (baseUri != null && baseUri.path.isNotEmpty && photoUrlStr.startsWith(baseUri.path)) {
+          final origin = '${baseUri.scheme}://${baseUri.authority}';
+          photoUrlStr = '$origin$photoUrlStr';
+        } else {
+          photoUrlStr = '$base$photoUrlStr';
+        }
+      }
+    }
+
+    // Rewrite localhost or 127.0.0.1 to server base host if configured
+    if (photoUrlStr.isNotEmpty && (photoUrlStr.startsWith('http://localhost') || photoUrlStr.startsWith('http://127.0.0.1'))) {
+      try {
+        final uri = Uri.parse(photoUrlStr);
+        final baseUri = Uri.parse(ConfigService.baseUrl);
+        if (baseUri.host.isNotEmpty && baseUri.host != 'localhost' && baseUri.host != '127.0.0.1') {
+          photoUrlStr = uri.replace(
+            scheme: baseUri.scheme,
+            host: baseUri.host,
+            port: baseUri.hasPort ? baseUri.port : (baseUri.scheme == 'https' ? 443 : 80),
+          ).toString();
+        }
+      } catch (_) {}
+    }
+
+    final photoUrl = photoUrlStr.isNotEmpty ? photoUrlStr : null;
 
     if (name.isEmpty) {
       name = username.isNotEmpty ? username : 'Telecaller';
@@ -133,8 +191,42 @@ class UserProfile {
       teamName: team,
       department: dept,
       joinDate: joinDate,
+      profilePhoto: rawPhoto.isNotEmpty ? rawPhoto : null,
       profilePhotoUrl: photoUrl,
+      avatarUrl: avatarUrlStr,
+      profilePicture: profilePicture,
+      profilePictureUrl: picUrlStr,
     );
+  }
+
+  /// Helper to obtain an ImageProvider for avatars supporting both Network and Base64 images
+  ImageProvider? get avatarImageProvider {
+    final url = profilePhotoUrl ?? profilePictureUrl ?? avatarUrl;
+    if (url != null && url.isNotEmpty) {
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        return NetworkImage(url);
+      }
+      if (url.startsWith('data:image/')) {
+        return _decodeBase64Image(url);
+      }
+    }
+    if (profilePicture != null && profilePicture!.isNotEmpty) {
+      return _decodeBase64Image(profilePicture!);
+    }
+    return null;
+  }
+
+  static ImageProvider? _decodeBase64Image(String raw) {
+    try {
+      String clean = raw;
+      if (clean.contains(',')) {
+        clean = clean.split(',').last;
+      }
+      clean = clean.replaceAll(RegExp(r'\s+'), '');
+      return MemoryImage(base64Decode(clean));
+    } catch (_) {
+      return null;
+    }
   }
 
   String get displayEmail =>
@@ -165,6 +257,10 @@ class UserProfile {
         'team_name': teamName,
         'department': department,
         'join_date': joinDate,
+        'profile_photo': profilePhoto,
         'profile_photo_url': profilePhotoUrl,
+        'avatar_url': avatarUrl ?? profilePhotoUrl,
+        'profile_picture': profilePicture,
+        'profile_picture_url': profilePictureUrl ?? profilePhotoUrl,
       };
 }
