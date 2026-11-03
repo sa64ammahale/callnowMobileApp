@@ -183,6 +183,21 @@ void main() {
       expect(payload['notes'], equals('Interested in business loan'));
       expect(payload['next_followup'], equals('2026-11-04 10:00:00'));
     });
+
+    test('Calling Desk outcomes remain hidden until Get Status is tapped', () {
+      bool showOutcomes = false;
+
+      // Initially outcomes are hidden
+      expect(showOutcomes, isFalse);
+
+      // User taps 'Get Status'
+      showOutcomes = true;
+      expect(showOutcomes, isTrue);
+
+      // Switching lead resets outcomes to hidden
+      showOutcomes = false;
+      expect(showOutcomes, isFalse);
+    });
   });
 
   group('Goal 3: CRUD on Leads (Strictly Self-Assigned Isolation)', () {

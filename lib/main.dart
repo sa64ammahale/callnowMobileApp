@@ -36,27 +36,27 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.light,
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+        scaffoldBackgroundColor: const Color(0xFFF6FAF7),
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2563EB),
+          seedColor: const Color(0xFF10B981),
           brightness: Brightness.light,
-          primary: const Color(0xFF2563EB),
+          primary: const Color(0xFF10B981),
           surface: Colors.white,
           surfaceContainerLowest: Colors.white,
-          surfaceContainerLow: const Color(0xFFF8FAFC),
-          surfaceContainer: const Color(0xFFF1F5F9),
+          surfaceContainerLow: const Color(0xFFF6FAF7),
+          surfaceContainer: const Color(0xFFECFDF5),
           outline: const Color(0xFFCBD5E1),
           outlineVariant: const Color(0xFFE2E8F0),
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.white,
-          foregroundColor: Color(0xFF0F172A),
+          foregroundColor: Color(0xFF064E3B),
           elevation: 0,
           scrolledUnderElevation: 0.5,
           surfaceTintColor: Colors.transparent,
-          iconTheme: IconThemeData(color: Color(0xFF1E293B)),
+          iconTheme: IconThemeData(color: Color(0xFF065F46)),
           titleTextStyle: TextStyle(
-            color: Color(0xFF0F172A),
+            color: Color(0xFF064E3B),
             fontSize: 18,
             fontWeight: FontWeight.w700,
           ),
@@ -67,20 +67,20 @@ class MyApp extends StatelessWidget {
           margin: EdgeInsets.zero,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            side: const BorderSide(color: Color(0xFFE2E8F0), width: 1),
+            side: const BorderSide(color: Color(0xFFD1FAE5), width: 1),
           ),
         ),
         navigationBarTheme: NavigationBarThemeData(
           backgroundColor: Colors.white,
           elevation: 4,
           surfaceTintColor: Colors.transparent,
-          indicatorColor: const Color(0xFFDBEAFE),
+          indicatorColor: const Color(0xFFD1FAE5),
           labelTextStyle: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.selected)) {
               return const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF1D4ED8),
+                color: Color(0xFF047857),
               );
             }
             return const TextStyle(
@@ -91,7 +91,7 @@ class MyApp extends StatelessWidget {
           }),
           iconTheme: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.selected)) {
-              return const IconThemeData(color: Color(0xFF1D4ED8), size: 24);
+              return const IconThemeData(color: Color(0xFF047857), size: 24);
             }
             return const IconThemeData(color: Color(0xFF64748B), size: 24);
           }),
@@ -110,7 +110,7 @@ class MyApp extends StatelessWidget {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFF2563EB), width: 1.5),
+            borderSide: const BorderSide(color: Color(0xFF10B981), width: 1.5),
           ),
           errorBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
@@ -121,7 +121,7 @@ class MyApp extends StatelessWidget {
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF2563EB),
+            backgroundColor: const Color(0xFF10B981),
             foregroundColor: Colors.white,
             elevation: 0,
             padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
@@ -131,7 +131,7 @@ class MyApp extends StatelessWidget {
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF2563EB),
+            backgroundColor: const Color(0xFF10B981),
             foregroundColor: Colors.white,
             elevation: 0,
             padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),

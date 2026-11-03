@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:callnow_new/constants/lead_stages.dart';
+import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
@@ -14,7 +15,7 @@ class CallingDeskScreen extends StatefulWidget {
 }
 
 class _CallingDeskScreenState extends State<CallingDeskScreen>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver {
   final List<Map<String, dynamic>> _leads = [];
   int _currentIndex = 0;
   bool _isLoading = true;
@@ -22,14 +23,13 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
   bool _isSubmitting = false;
   String? _errorMessage;
 
-  // Inactivity blinking for footer warning
+  // Inactivity tracking
   Timer? _inactivityTimer;
-  late final AnimationController _blinkController;
-  late final Animation<double> _blinkAnimation;
 
   // Verified call log state from Android OS
   VerifiedCallLog? _verifiedCallLog;
   bool _isCheckingCallLog = false;
+  bool _showOutcomes = false;
 
   // Current lead form state
   String _selectedDisposition = 'NOT_CONNECTED_BUSY';
@@ -133,13 +133,6 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _blinkController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 650),
-    );
-    _blinkAnimation = Tween<double>(begin: 1.0, end: 0.25).animate(
-      CurvedAnimation(parent: _blinkController, curve: Curves.easeInOut),
-    );
     _startInactivityTimer();
     _loadInitialBatch();
     CallTrackingService.activeCallSession.addListener(_onCallSessionDetected);
@@ -148,7 +141,6 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
   @override
   void dispose() {
     _inactivityTimer?.cancel();
-    _blinkController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     CallTrackingService.activeCallSession.removeListener(_onCallSessionDetected);
     _notesController.dispose();
@@ -157,23 +149,10 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
 
   void _startInactivityTimer() {
     _inactivityTimer?.cancel();
-    if (_blinkController.isAnimating) {
-      _blinkController.stop();
-      _blinkController.value = 0.0;
-    }
-    _inactivityTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted && (_verifiedCallLog == null || !_verifiedCallLog!.isDialed)) {
-        _blinkController.repeat(reverse: true);
-      }
-    });
   }
 
   void _stopInactivityBlink() {
     _inactivityTimer?.cancel();
-    if (_blinkController.isAnimating) {
-      _blinkController.stop();
-      _blinkController.value = 0.0;
-    }
   }
 
   @override
@@ -340,7 +319,15 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     _selectedDisposition = 'NOT_CONNECTED_BUSY';
     _verifiedCallLog = null;
     _isCheckingCallLog = false;
+    _showOutcomes = false;
     _startInactivityTimer();
+  }
+
+  Future<void> _onGetStatusTapped() async {
+    setState(() {
+      _showOutcomes = true;
+    });
+    await _verifyCallWithAndroidLog(showToast: true);
   }
 
   Future<void> _callCurrentLead() async {
@@ -477,8 +464,12 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     final lead = _currentLead;
     if (lead == null) return;
 
-    // Strict Dial Enforcement: Outgoing call must be found in Android call logs
-    if (_verifiedCallLog == null || !_verifiedCallLog!.isDialed) {
+    final bool isDialed = _verifiedCallLog != null && _verifiedCallLog!.isDialed;
+    final verifiedDur = isDialed ? _verifiedCallLog!.durationSeconds : 0;
+
+    // Connected outcomes require verified outgoing talk time
+    final isConnectedOutcome = _connectedOptions.any((o) => o['id'] == _selectedDisposition);
+    if (isConnectedOutcome && (!isDialed || verifiedDur == 0)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Row(
@@ -487,7 +478,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
               SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Dial verification required: Android call logs show no outgoing call to this number yet. Please dial first.',
+                  'Connected outcomes require verified talk time in device call log. Please place the call or choose an unconnected outcome.',
                   style: TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
@@ -500,8 +491,6 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
       );
       return;
     }
-
-    final verifiedDur = _verifiedCallLog!.durationSeconds;
 
     // Anti-Fraud Rule 1: Zero duration cannot be submitted with connected outcomes
     if (verifiedDur == 0) {
@@ -651,161 +640,57 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
 
     return Scaffold(
       body: _buildBody(colorScheme),
-      bottomNavigationBar: _buildBottomActionBar(colorScheme),
+      bottomNavigationBar: null,
     );
   }
 
-  Widget? _buildBottomActionBar(ColorScheme colorScheme) {
-    if (_isLoading || _errorMessage != null || _currentLead == null) {
-      return null;
-    }
-
-    final bool isDialed = _verifiedCallLog != null && _verifiedCallLog!.isDialed;
-
+  Widget _buildSaveAndSubmitActions() {
     return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 6,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      padding: EdgeInsets.only(
-        left: 14,
-        right: 14,
-        top: 6,
-        bottom: MediaQuery.of(context).padding.bottom + 6,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      margin: const EdgeInsets.only(top: 8),
+      child: Row(
         children: [
-          // Call verification status bar (Compact)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            margin: const EdgeInsets.only(bottom: 6),
-            decoration: BoxDecoration(
-              color: isDialed
-                  ? Colors.green.withValues(alpha: 0.1)
-                  : Colors.amber.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: isDialed ? Colors.green.shade300 : Colors.amber.shade300,
-                width: 1,
+          // Skip Lead button
+          Expanded(
+            flex: 2,
+            child: OutlinedButton.icon(
+              onPressed: _isSubmitting ? null : _skipLead,
+              icon: const Icon(Icons.skip_next_rounded, size: 19),
+              label: const Text(
+                'Skip',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
               ),
-            ),
-            child: Row(
-              children: [
-                if (_isCheckingCallLog) ...[
-                  const SizedBox(
-                    width: 11,
-                    height: 11,
-                    child: CircularProgressIndicator(strokeWidth: 1.5),
-                  ),
-                  const SizedBox(width: 6),
-                  const Expanded(
-                    child: Text(
-                      'Verifying with Android call logs...',
-                      style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ] else if (isDialed) ...[
-                  const Icon(Icons.verified, size: 13, color: Colors.green),
-                  const SizedBox(width: 5),
-                  Expanded(
-                    child: Text(
-                      '✓ Call Log Verified: Dialed • ${_verifiedCallLog!.durationFormatted} talk time',
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green.shade900,
-                      ),
-                    ),
-                  ),
-                ] else ...[
-                  Expanded(
-                    child: AnimatedBuilder(
-                      animation: _blinkAnimation,
-                      builder: (context, child) {
-                        return Opacity(
-                          opacity: _blinkController.isAnimating
-                              ? _blinkAnimation.value
-                              : 1.0,
-                          child: child,
-                        );
-                      },
-                      child: Row(
-                        children: [
-                          Icon(Icons.lock_clock, size: 13, color: Colors.amber.shade900),
-                          const SizedBox(width: 5),
-                          Expanded(
-                            child: Text(
-                              'Dial customer to unlock submit',
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.amber.shade900,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ],
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                side: const BorderSide(color: Color(0xFFCBD5E1), width: 1.2),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
             ),
           ),
-          Row(
-            children: [
-              OutlinedButton.icon(
-                onPressed: _isSubmitting ? null : _skipLead,
-                icon: const Icon(Icons.skip_next, size: 16),
-                label: const Text('Skip', style: TextStyle(fontSize: 12.5)),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                  visualDensity: VisualDensity.compact,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                ),
+          const SizedBox(width: 10),
+          // Save and Submit Call Details button
+          Expanded(
+            flex: 5,
+            child: FilledButton.icon(
+              onPressed: _isSubmitting ? null : _submitAndNext,
+              icon: _isSubmitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.check_circle_outline_rounded, size: 20),
+              label: Text(
+                _isSubmitting ? 'Saving Call...' : 'Save & Submit Call Details',
+                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _isSubmitting
-                      ? null
-                      : (isDialed
-                          ? _submitAndNext
-                          : () async {
-                              await _verifyCallWithAndroidLog(showToast: true);
-                            }),
-                  icon: _isSubmitting
-                      ? const SizedBox(
-                          width: 15,
-                          height: 15,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : Icon(
-                          isDialed ? Icons.check_circle_outline : Icons.lock_outline,
-                          size: 17,
-                        ),
-                  label: Text(
-                    _isSubmitting
-                        ? 'Saving...'
-                        : (isDialed ? 'Submit & Next Call' : 'Dial to Unlock Submit'),
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                  ),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: isDialed ? Colors.green.shade700 : Colors.grey.shade400,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 9),
-                    visualDensity: VisualDensity.compact,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                ),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF10B981),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                elevation: 2,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-            ],
+            ),
           ),
         ],
       ),
@@ -950,23 +835,30 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                 leadStage: leadStage,
                 priority: priority,
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
 
-              // 3. Live Call Verification & Timing Tier Banner
-              _buildTimingTierBanner(),
-              const SizedBox(height: 10),
+              // Outcomes & Submission - only shown after user taps 'Get Status'
+              if (_showOutcomes) ...[
+                // Verified Status Banner (talk time duration & connection classification)
+                _buildVerifiedCallStatusBanner(),
+                const SizedBox(height: 10),
 
-              // 4. Structured Disposition & Outcome Card
-              _buildDispositionCard(),
-              const SizedBox(height: 10),
+                // Structured Disposition & Outcome Card
+                _buildDispositionCard(),
+                const SizedBox(height: 10),
 
-              // 5. Callback & Follow-up Reminder Card
-              _buildFollowupCard(),
-              const SizedBox(height: 10),
+                // Callback & Follow-up Reminder Card
+                _buildFollowupCard(),
+                const SizedBox(height: 10),
 
-              // 6. Telecaller Remarks & Quick Notes Card
-              _buildRemarksCard(),
-              const SizedBox(height: 10),
+                // Telecaller Remarks & Quick Notes Card
+                _buildRemarksCard(),
+                const SizedBox(height: 12),
+
+                // Save & Submit Button + Skip Lead Button
+                _buildSaveAndSubmitActions(),
+                const SizedBox(height: 24),
+              ],
             ],
           ),
         ),
@@ -1444,53 +1336,77 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                       ),
                     ),
                   ],
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
 
-                  // Call & WhatsApp Action Buttons
+                  // 3 Circular Action Buttons Row
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      Expanded(
-                        flex: 3,
-                        child: FilledButton.icon(
-                          onPressed: _callCurrentLead,
-                          icon: const Icon(Icons.call_rounded, size: 18),
-                          label: const Text(
-                            'Call Now',
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                          ),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFF2563EB),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 11),
-                            visualDensity: VisualDensity.compact,
-                            elevation: 1,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                        ),
+                      // 1. WhatsApp / Message (Red Circle)
+                      _buildCircularActionButton(
+                        icon: Icons.chat_bubble_rounded,
+                        color: const Color(0xFFEF4444),
+                        tooltip: 'Message on WhatsApp',
+                        onTap: _whatsappCurrentLead,
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 2,
-                        child: OutlinedButton.icon(
-                          onPressed: _whatsappCurrentLead,
-                          icon: const Icon(Icons.chat_bubble_outline, color: Color(0xFF16A34A), size: 18),
-                          label: const Text(
-                            'WhatsApp',
-                            style: TextStyle(color: Color(0xFF16A34A), fontSize: 13.5, fontWeight: FontWeight.w600),
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 11),
-                            visualDensity: VisualDensity.compact,
-                            side: const BorderSide(color: Color(0xFF16A34A), width: 1.2),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                      // 2. Call History (Slate Circle) -> opens Today's Call History
+                      _buildCircularActionButton(
+                        icon: Icons.history_rounded,
+                        color: const Color(0xFF475569),
+                        tooltip: "Today's Call History",
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const CallReportsScreen(
+                                initialTabIndex: 1,
+                                initialPeriod: 'today',
+                              ),
                             ),
-                          ),
-                        ),
+                          );
+                        },
+                      ),
+                      // 3. Call Now (Vibrant Green Circle)
+                      _buildCircularActionButton(
+                        icon: Icons.call_rounded,
+                        color: const Color(0xFF16A34A),
+                        tooltip: 'Call Now',
+                        onTap: _callCurrentLead,
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Get Status Button (Full Width, Prominent)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      onPressed: _isCheckingCallLog ? null : _onGetStatusTapped,
+                      icon: _isCheckingCallLog
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.refresh_rounded, size: 21, color: Colors.white),
+                      label: Text(
+                        _isCheckingCallLog ? 'Getting Status...' : 'Get Status',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF334155),
+                        foregroundColor: Colors.white,
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -1501,8 +1417,49 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     );
   }
 
-  /// 3. Call Verification & Timing Tier Banner
-  Widget _buildTimingTierBanner() {
+  Widget _buildCircularActionButton({
+    required IconData icon,
+    required Color color,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        shape: const CircleBorder(),
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Ink(
+            width: 62,
+            height: 62,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: color.withValues(alpha: 0.35),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Center(
+              child: Icon(
+                icon,
+                color: Colors.white,
+                size: 28,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 3. Verified Call Status & Timing Tier Banner (shown after Get Status)
+  Widget _buildVerifiedCallStatusBanner() {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -2098,6 +2055,6 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         return 'Call Dialed • Not Connected (0s)';
       }
     }
-    return _hasCallOccurred ? 'Call Not Connected (0s)' : 'Ready for Call (Not Dialed)';
+    return _hasCallOccurred ? 'Call Not Connected (0s)' : 'Status Retrieved (0s Talk Time)';
   }
 }
