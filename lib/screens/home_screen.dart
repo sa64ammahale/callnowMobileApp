@@ -194,7 +194,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onOpenCallingDesk: () => _onItemTapped(2),
       ),
       CallingDeskScreen(
-        onBack: () => _onItemTapped(0),
+        onOpenReports: () => _onItemTapped(3),
       ),
       CallReportsScreen(
         key: _reportsKey,
@@ -207,63 +207,59 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ];
 
     return Scaffold(
-      appBar: _selectedIndex == 2
-          ? null
-          : AppBar(
-              title: Row(
-                children: [
-                  const Icon(Icons.phone_in_talk, size: 22),
-                  const SizedBox(width: 8),
-                  Text(
-                    _currentTitle,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                  ),
-                ],
-              ),
-              actions: [
-                ListenableBuilder(
-                  listenable: FollowupService.instance,
-                  builder: (context, _) {
-                    final pendingCount = FollowupService.instance.getPending().length;
-                    return IconButton(
-                      icon: Badge(
-                        isLabelVisible: pendingCount > 0,
-                        label: Text('$pendingCount'),
-                        backgroundColor: Colors.amber.shade900,
-                        child: const Icon(Icons.alarm_on_outlined),
-                      ),
-                      tooltip: 'Client Follow-ups ($pendingCount)',
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const FollowUpScreen()),
-                        );
-                      },
-                    );
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.logout),
-                  tooltip: 'Logout',
-                  onPressed: () async {
-                    await ApiService.logout();
-                    if (context.mounted) {
-                      Navigator.pushReplacementNamed(context, '/login');
-                    }
-                  },
-                ),
-              ],
+      appBar: AppBar(
+        title: Row(
+          children: [
+            const Icon(Icons.phone_in_talk, size: 22),
+            const SizedBox(width: 8),
+            Text(
+              _currentTitle,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
             ),
+          ],
+        ),
+        actions: [
+          ListenableBuilder(
+            listenable: FollowupService.instance,
+            builder: (context, _) {
+              final pendingCount = FollowupService.instance.getPending().length;
+              return IconButton(
+                icon: Badge(
+                  isLabelVisible: pendingCount > 0,
+                  label: Text('$pendingCount'),
+                  backgroundColor: Colors.amber.shade900,
+                  child: const Icon(Icons.alarm_on_outlined),
+                ),
+                tooltip: 'Client Follow-ups ($pendingCount)',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const FollowUpScreen()),
+                  );
+                },
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Logout',
+            onPressed: () async {
+              await ApiService.logout();
+              if (context.mounted) {
+                Navigator.pushReplacementNamed(context, '/login');
+              }
+            },
+          ),
+        ],
+      ),
       body: IndexedStack(
         index: _selectedIndex,
         children: pages,
       ),
-      bottomNavigationBar: _selectedIndex == 2
-          ? null
-          : NavigationBar(
-              selectedIndex: _selectedIndex,
-              onDestinationSelected: _onItemTapped,
-              destinations: const [
+      bottomNavigationBar: NavigationBar(
+          selectedIndex: _selectedIndex,
+          onDestinationSelected: _onItemTapped,
+          destinations: const [
           NavigationDestination(
             icon: Icon(Icons.dashboard_outlined),
             selectedIcon: Icon(Icons.dashboard),

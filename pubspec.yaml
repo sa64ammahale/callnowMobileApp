@@ -92,6 +92,7 @@ flutter:
      - assets/images/search.png
      - assets/images/settings.png
      - assets/images/sys_update.png
+     - assets/images/whatsapp.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/assets-and-images/#resolution-aware

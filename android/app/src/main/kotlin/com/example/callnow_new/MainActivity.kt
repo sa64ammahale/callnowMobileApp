@@ -2,7 +2,10 @@ package com.example.callnow_new
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.database.Cursor
+import android.net.Uri
 import android.provider.CallLog
 import androidx.annotation.NonNull
 import androidx.core.content.ContextCompat
@@ -30,9 +33,42 @@ class MainActivity: FlutterActivity() {
                     ) == PackageManager.PERMISSION_GRANTED
                     result.success(hasPerm)
                 }
+                "openWhatsApp" -> {
+                    val phoneNumber = call.argument<String>("phoneNumber").orEmpty()
+                    val message = call.argument<String>("message").orEmpty()
+                    result.success(openWhatsApp(phoneNumber, message))
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    private fun openWhatsApp(phoneNumber: String, message: String): Boolean {
+        val cleanNumber = phoneNumber.replace(Regex("[^0-9]"), "")
+        if (cleanNumber.isEmpty()) return false
+
+        val chatUri = Uri.Builder()
+            .scheme("https")
+            .authority("wa.me")
+            .appendPath(cleanNumber)
+            .apply {
+                if (message.isNotEmpty()) appendQueryParameter("text", message)
+            }
+            .build()
+
+        for (packageName in listOf("com.whatsapp.w4b", "com.whatsapp")) {
+            try {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, chatUri)
+                        .setPackage(packageName)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+                return true
+            } catch (_: ActivityNotFoundException) {
+                // Try the next installed WhatsApp app.
+            }
+        }
+        return false
     }
 
     private fun queryCallLog(targetNumber: String, afterTimestamp: Long): Map<String, Any?> {

@@ -390,10 +390,18 @@ class CallTrackingService {
   /// Helper to trigger WhatsApp chat with pre-filled text
   static Future<bool> openWhatsApp(String phoneNumber, {String message = ''}) async {
     final cleanNumber = phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
-    final whatsappUrl = Uri.parse(
-      'https://wa.me/$cleanNumber${message.isNotEmpty ? '?text=${Uri.encodeComponent(message)}' : ''}',
-    );
     try {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        return await _verifierChannel.invokeMethod<bool>('openWhatsApp', {
+              'phoneNumber': cleanNumber,
+              'message': message,
+            }) ??
+            false;
+      }
+
+      final whatsappUrl = Uri.parse(
+        'https://wa.me/$cleanNumber${message.isNotEmpty ? '?text=${Uri.encodeComponent(message)}' : ''}',
+      );
       if (await canLaunchUrl(whatsappUrl)) {
         return await launchUrl(whatsappUrl, mode: LaunchMode.externalApplication);
       } else {

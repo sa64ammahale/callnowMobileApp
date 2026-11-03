@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:callnow_new/screens/profile_screen.dart';
+import 'package:callnow_new/screens/whatsapp_message_editor_screen.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/config_service.dart';
+import 'package:callnow_new/services/whatsapp_message_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -15,6 +17,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _vibrateOnEnd = true;
   bool _keepScreenOn = true;
   bool _quickWhatsAppPrompt = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadWhatsAppPreference();
+  }
+
+  Future<void> _loadWhatsAppPreference() async {
+    try {
+      final enabled = await WhatsAppMessageService.isIntroEnabled();
+      if (mounted) setState(() => _quickWhatsAppPrompt = enabled);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load WhatsApp preference: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _setWhatsAppIntroEnabled(bool enabled) async {
+    try {
+      await WhatsAppMessageService.setIntroEnabled(enabled);
+      if (mounted) setState(() => _quickWhatsAppPrompt = enabled);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save WhatsApp preference: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _editWhatsAppMessage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const WhatsAppMessageEditorScreen(),
+      ),
+    );
+  }
 
   void _openProfile() {
     Navigator.push(
@@ -293,7 +335,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         subtitle: const Text('Auto-populate client greeting template when opening chat', style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
                         value: _quickWhatsAppPrompt,
                         activeThumbColor: const Color(0xFF16A34A),
-                        onChanged: (val) => setState(() => _quickWhatsAppPrompt = val),
+                        onChanged: _setWhatsAppIntroEnabled,
+                      ),
+                      ListTile(
+                        leading: const Icon(
+                          Icons.edit_note_rounded,
+                          color: Color(0xFF16A34A),
+                        ),
+                        title: const Text(
+                          'Edit WhatsApp message',
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: const Text(
+                          'Customize the message used for each customer',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: _editWhatsAppMessage,
                       ),
                     ],
                   ),

@@ -16,6 +16,8 @@
 
     <!-- Query schemes for URL launcher (Android 11+) -->
     <queries>
+        <package android:name="com.whatsapp.w4b" />
+        <package android:name="com.whatsapp" />
         <intent>
             <action android:name="android.intent.action.DIAL" />
             <data android:scheme="tel" />

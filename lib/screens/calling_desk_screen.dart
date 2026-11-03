@@ -1,16 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:callnow_new/constants/lead_stages.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
-import 'package:callnow_new/screens/followup_screen.dart';
+import 'package:callnow_new/services/whatsapp_message_service.dart';
 
 class CallingDeskScreen extends StatefulWidget {
-  final VoidCallback? onBack;
-  const CallingDeskScreen({super.key, this.onBack});
+  final VoidCallback? onOpenReports;
+  const CallingDeskScreen({super.key, this.onOpenReports});
 
   @override
   State<CallingDeskScreen> createState() => _CallingDeskScreenState();
@@ -110,12 +109,12 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
       ];
 
   final List<String> _quickRemarks = [
-    'Customer requested DND / Do not call',
-    'Called, asked to callback later',
-    'Shared brochure on WhatsApp',
-    'Needs loan urgently (₹5L+)',
-    'Currently busy in meeting',
-    'Wrong person / not enquiring',
+    'DND / Do not call',
+    'Callback later',
+    'Sent brochure on WA',
+    'Needs loan urgently',
+    'Busy in meeting',
+    'Wrong person',
   ];
 
   @override
@@ -341,8 +340,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         _selectedDisposition = isConnected ? 'NOT_INTERESTED' : 'RINGING';
       });
 
-      // Bottom floating pill toast matching screenshot:
-      // "Status: Connected. CallType.outgoing" / "Status: Not Connected. CallType.outgoing"
+      // Bottom floating pill toast — compact, no overflow
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -350,50 +348,58 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
           backgroundColor: Colors.transparent,
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 3),
-          margin: const EdgeInsets.only(bottom: 24, left: 32, right: 32),
-          content: Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(30),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
+          // Tight horizontal margin so the pill never exceeds screen width
+          margin: const EdgeInsets.only(bottom: 24, left: 48, right: 48),
+          padding: EdgeInsets.zero,
+          content: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(30),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.12),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: isConnected
+                        ? const Color(0xFFDCFCE7)
+                        : const Color(0xFFFFEDD5),
+                    shape: BoxShape.circle,
                   ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(5),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFFFEDD5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.call_made_rounded,
-                      size: 15,
-                      color: Color(0xFFEA580C),
-                    ),
-                  ),
-                  const SizedBox(width: 9),
-                  Text(
+                  child: Icon(
                     isConnected
-                        ? 'Status: Connected. CallType.outgoing'
-                        : 'Status: Not Connected. CallType.outgoing',
+                        ? Icons.call_made_rounded
+                        : Icons.phone_missed_rounded,
+                    size: 13,
+                    color: isConnected
+                        ? const Color(0xFF16A34A)
+                        : const Color(0xFFEA580C),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    isConnected ? '✓ Connected' : '✗ Not Connected',
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
                       color: Color(0xFF1E293B),
                     ),
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
@@ -429,11 +435,28 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     final lead = _currentLead;
     if (lead == null) return;
     final mobile = (lead['mobile'] ?? '').toString();
-    final name = (lead['name'] ?? 'Client').toString();
-    final pkg = (lead['package'] ?? 'financial assistance').toString();
+    String msg = '';
+    try {
+      if (await WhatsAppMessageService.isIntroEnabled()) {
+        final template = await WhatsAppMessageService.loadTemplate();
+        final name = (lead['name'] ?? 'Client').toString();
+        msg = WhatsAppMessageService.personalize(template, name);
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load WhatsApp message: $error')),
+        );
+      }
+      return;
+    }
 
-    final msg = 'Hello $name, this is regarding your enquiry for $pkg on CallNow. Are you available for a quick conversation?';
-    await CallTrackingService.openWhatsApp(mobile, message: msg);
+    final launched = await CallTrackingService.openWhatsApp(mobile, message: msg);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open WhatsApp or WhatsApp Business.')),
+      );
+    }
   }
 
   Future<void> _pickFollowupDateTime() async {
@@ -1005,66 +1028,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF261936), // Deep dark purple matching screenshots
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF261936),
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () {
-            if (widget.onBack != null) {
-              widget.onBack!();
-            } else if (Navigator.canPop(context)) {
-              Navigator.pop(context);
-            }
-          },
-        ),
-        title: const Text(
-          'Dial Calls',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        actions: [
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.white),
-            color: const Color(0xFF383838),
-            onSelected: (val) {
-              if (val == 'reports') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const CallReportsScreen(initialTabIndex: 1, initialPeriod: 'today'),
-                  ),
-                );
-              } else if (val == 'followups') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const FollowUpScreen()),
-                );
-              } else if (val == 'refresh') {
-                _loadInitialBatch(force: true);
-              }
-            },
-            itemBuilder: (ctx) => const [
-              PopupMenuItem(
-                value: 'reports',
-                child: Text("Today's Reports", style: TextStyle(color: Colors.white)),
-              ),
-              PopupMenuItem(
-                value: 'followups',
-                child: Text('Client Follow-ups', style: TextStyle(color: Colors.white)),
-              ),
-              PopupMenuItem(
-                value: 'refresh',
-                child: Text('Refresh Contacts Queue', style: TextStyle(color: Colors.white)),
-              ),
-            ],
-          ),
-        ],
-      ),
+      // No AppBar here — HomeScreen's AppBar is shown on all tabs
       body: _buildBody(),
     );
   }
@@ -1120,9 +1084,9 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(color: Colors.white),
+            CircularProgressIndicator(),
             SizedBox(height: 16),
-            Text('Fetching call queue from server...', style: TextStyle(fontSize: 14, color: Colors.white70)),
+            Text('Fetching call queue from server...', style: TextStyle(fontSize: 14, color: Color(0xFF64748B))),
           ],
         ),
       );
@@ -1139,13 +1103,13 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
               const SizedBox(height: 16),
               const Text(
                 'Failed to load contacts',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
               ),
               const SizedBox(height: 8),
               Text(
                 _errorMessage!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white70),
+                style: const TextStyle(color: Color(0xFF64748B)),
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
@@ -1170,21 +1134,21 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.2),
+                  color: Colors.green.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.task_alt_rounded, size: 72, color: Colors.greenAccent),
+                child: const Icon(Icons.task_alt_rounded, size: 72, color: Colors.green),
               ),
               const SizedBox(height: 20),
               const Text(
                 'All Calls Completed!',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
               ),
               const SizedBox(height: 8),
               const Text(
                 'You have completed all contacts in the current batch. Tap below to fetch the next batch from the server.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white70),
+                style: TextStyle(color: Color(0xFF64748B)),
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
@@ -1204,6 +1168,11 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     final pkg = (lead['package'] ?? '').toString().trim();
     final formattedPkg = _formatPackageAmount(pkg);
 
+    // Lead count & call status from API
+    final callCount = int.tryParse(lead['call_count']?.toString() ?? '0') ?? 0;
+    final lastStatus = (lead['last_status'] ?? '').toString().trim();
+    final isCalledBefore = callCount > 0;
+
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
@@ -1222,153 +1191,191 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
             mobile: mobile,
             company: company,
             formattedPkg: formattedPkg,
+            callCount: callCount,
+            lastStatus: lastStatus,
+            isCalledBefore: isCalledBefore,
           ),
         ),
       ),
     );
   }
 
-  /// Unified 2-part card exactly reproducing the Telecalling CRM screen from screenshots
+  /// Unified contact + actions card — Material white theme matching Dashboard
   Widget _buildUnifiedCard({
     required String name,
     required String mobile,
     required String company,
     required String formattedPkg,
+    required int callCount,
+    required String lastStatus,
+    required bool isCalledBefore,
   }) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 14,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // 1. Upper dark charcoal container (#383838) with styled italic cursive text
-            Container(
-              color: const Color(0xFF383838),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildInfoRow(
-                    label: 'Name:',
-                    valueWidget: Text(
-                      name.toUpperCase(),
-                      style: const TextStyle(
-                        fontSize: 16.5,
-                        color: Colors.white,
-                        fontStyle: FontStyle.italic,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // ── Lead counter + call-status badge row ──────────────────────────
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Lead ${_currentIndex + 1} of ${_leads.length}',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isCalledBefore
+                      ? const Color(0xFFDCFCE7) // green tint = called
+                      : const Color(0xFFFFEDD5), // orange tint = not called
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isCalledBefore
+                        ? const Color(0xFF86EFAC)
+                        : const Color(0xFFFDBA74),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isCalledBefore ? Icons.check_circle_rounded : Icons.phone_missed_rounded,
+                      size: 12,
+                      color: isCalledBefore
+                          ? const Color(0xFF16A34A)
+                          : const Color(0xFFEA580C),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      isCalledBefore
+                          ? 'Called $callCount× · $lastStatus'
+                          : 'Not Called',
+                      style: TextStyle(
+                        fontSize: 11,
                         fontWeight: FontWeight.bold,
-                        letterSpacing: 0.2,
+                        color: isCalledBefore
+                            ? const Color(0xFF166534)
+                            : const Color(0xFF9A3412),
                       ),
                     ),
-                  ),
-                  _buildInfoRow(
-                    label: 'Mobile:',
-                    valueWidget: Row(
-                      children: [
-                        Text(
-                          mobile,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            color: Colors.white,
-                            fontStyle: FontStyle.italic,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        InkWell(
-                          onTap: () {
-                            Clipboard.setData(ClipboardData(text: mobile));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Copied $mobile to clipboard'),
-                                duration: const Duration(seconds: 1),
-                                behavior: SnackBarBehavior.floating,
-                              ),
-                            );
-                          },
-                          child: const Icon(Icons.copy_rounded, size: 14, color: Colors.white60),
-                        ),
-                      ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // ── Contact Details Card ──────────────────────────────────────────
+        Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          color: Colors.white,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildInfoRow(
+                  icon: Icons.person_rounded,
+                  label: 'Name',
+                  valueWidget: Text(
+                    name,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: Color(0xFF0F172A),
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                  _buildInfoRow(
-                    label: 'Company:',
-                    valueWidget: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Flexible(
-                          child: Text(
-                            company.isNotEmpty && company != 'Individual' ? company.toUpperCase() : 'INDIVIDUAL',
-                            style: const TextStyle(
-                              fontSize: 15,
-                              color: Color(0xFFFF5252), // Coral red/orange from screenshot
-                              fontStyle: FontStyle.italic,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        const Icon(
-                          Icons.search,
-                          size: 15,
-                          color: Color(0xFFFF5252),
-                        ),
-                      ],
+                ),
+                const Divider(height: 16, thickness: 0.5),
+                _buildInfoRow(
+                  icon: Icons.phone_rounded,
+                  label: 'Mobile',
+                  valueWidget: Text(
+                    mobile,
+                    style: const TextStyle(
+                      fontSize: 15.5,
+                      color: Color(0xFF1E293B),
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
                     ),
                   ),
+                ),
+                if (company.isNotEmpty && company != 'Individual') ...[
+                  const Divider(height: 16, thickness: 0.5),
                   _buildInfoRow(
-                    label: 'Package:',
+                    icon: Icons.business_rounded,
+                    label: 'Company',
                     valueWidget: Text(
-                      formattedPkg.toUpperCase(),
+                      company,
                       style: const TextStyle(
-                        fontSize: 15.5,
-                        color: Colors.white,
-                        fontStyle: FontStyle.italic,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 14.5,
+                        color: Color(0xFFEA580C),
+                        fontWeight: FontWeight.bold,
                       ),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
                     ),
                   ),
                 ],
-              ),
+                const Divider(height: 16, thickness: 0.5),
+                _buildInfoRow(
+                  icon: Icons.currency_rupee_rounded,
+                  label: 'Package',
+                  valueWidget: Text(
+                    formattedPkg,
+                    style: const TextStyle(
+                      fontSize: 14.5,
+                      color: Color(0xFF059669),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
             ),
+          ),
+        ),
+        const SizedBox(height: 12),
 
-            // 2. Lower light silver/grey container (#DFE2E6) with actions & outcomes
-            Container(
-              color: const Color(0xFFDFE2E6),
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Row with 3 circular buttons: Red (SMS/WhatsApp), Slate (History), Green (Call)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      // Red Message / WhatsApp Button (52px diameter)
-                      _buildCircularActionButton(
-                        icon: Icons.message_rounded,
-                        color: const Color(0xFFFF5252),
-                        tooltip: 'Message / WhatsApp',
-                        onTap: _whatsappCurrentLead,
+        // ── Action Buttons Card ───────────────────────────────────────────
+        Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          color: Colors.white,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Row: WhatsApp | History | Call
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildCircularActionButton(
+                      iconWidget: Image.asset(
+                        'assets/images/whatsapp.png',
+                        width: 32,
+                        height: 32,
+                        fit: BoxFit.contain,
                       ),
-                      // Slate History Clock Button (52px diameter)
-                      _buildCircularActionButton(
-                        icon: Icons.history_rounded,
-                        color: const Color(0xFF78909C),
-                        tooltip: "Today's Call History",
-                        onTap: () {
+                      color: const Color(0xFF25D366),
+                      tooltip: 'Message on WhatsApp',
+                      onTap: _whatsappCurrentLead,
+                    ),
+                    _buildCircularActionButton(
+                      icon: Icons.history_rounded,
+                      color: const Color(0xFF78909C),
+                      tooltip: "Today's Call History",
+                      onTap: () {
+                        if (widget.onOpenReports != null) {
+                          widget.onOpenReports!();
+                        } else {
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => const CallReportsScreen(
@@ -1377,97 +1384,98 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                               ),
                             ),
                           );
-                        },
-                      ),
-                      // Green Call Button (52px diameter)
-                      _buildCircularActionButton(
-                        icon: Icons.call_rounded,
-                        color: const Color(0xFF4CAF50),
-                        tooltip: 'Call Now',
-                        onTap: _callCurrentLead,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  // "Get Status" Button (Dark Charcoal #383838)
-                  SizedBox(
-                    width: double.infinity,
-                    height: 46,
-                    child: ElevatedButton(
-                      onPressed: _isCheckingCallLog ? null : _onGetStatusTapped,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF383838),
-                        foregroundColor: Colors.white,
-                        elevation: 1,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: _isCheckingCallLog
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Text(
-                              'Get Status',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 0.2,
-                              ),
-                            ),
+                        }
+                      },
                     ),
-                  ),
-
-                  // Outcomes & Next - shown after user clicks 'Get Status'
-                  if (_showOutcomes) ...[
-                    const SizedBox(height: 10),
-                    _buildDispositionCard(),
-                    if (_selectedDisposition == 'CALLBACK_BUSY' || _followupDateTime != null) ...[
-                      const SizedBox(height: 10),
-                      _buildFollowupCard(),
-                    ],
-                    const SizedBox(height: 10),
-                    _buildRemarksCard(),
-                    const SizedBox(height: 10),
-                    _buildSaveAndSubmitActions(),
+                    _buildCircularActionButton(
+                      icon: Icons.call_rounded,
+                      color: const Color(0xFF4CAF50),
+                      tooltip: 'Call Now',
+                      onTap: _callCurrentLead,
+                    ),
                   ],
+                ),
+                const SizedBox(height: 12),
+
+                // Get Status button
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: _isCheckingCallLog ? null : _onGetStatusTapped,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF334155),
+                      foregroundColor: Colors.white,
+                      elevation: 1,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: _isCheckingCallLog
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Text(
+                            'Get Status',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                  ),
+                ),
+
+                // Outcomes + Save — shown only after 'Get Status' is tapped
+                if (_showOutcomes) ...[
+                  const SizedBox(height: 10),
+                  _buildDispositionCard(),
+                  if (_selectedDisposition == 'CALLBACK_BUSY' || _followupDateTime != null) ...[
+                    const SizedBox(height: 10),
+                    _buildFollowupCard(),
+                  ],
+                  const SizedBox(height: 10),
+                  _buildRemarksCard(),
+                  const SizedBox(height: 10),
+                  _buildSaveAndSubmitActions(),
                 ],
-              ),
+              ],
             ),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(height: 16),
+      ],
     );
   }
 
-  /// Helper row for styled handwriting/italic contact details
+  /// Helper row for contact details — icon + label + value
   Widget _buildInfoRow({
+    IconData? icon,
     required String label,
     required Widget valueWidget,
   }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3.5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 85,
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 16.5,
-                color: Colors.white,
-                fontStyle: FontStyle.italic,
-                fontWeight: FontWeight.w500,
-              ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (icon != null) ...[
+          Icon(icon, size: 17, color: const Color(0xFF64748B)),
+          const SizedBox(width: 8),
+        ],
+        SizedBox(
+          width: 72,
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              color: Color(0xFF64748B),
+              fontWeight: FontWeight.w500,
             ),
           ),
-          Expanded(child: valueWidget),
-        ],
-      ),
+        ),
+        Expanded(child: valueWidget),
+      ],
     );
   }
 
@@ -1522,11 +1530,12 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: const Color(0xFF333742), // Dark card matching user screenshot
+        color: const Color(0xFFF8FAFC), // Light Material surface
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 8,
             offset: const Offset(0, 3),
           ),
@@ -1629,8 +1638,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                  fontStyle: FontStyle.italic,
-                  color: isSelected ? Colors.white : const Color(0xFFE2E8F0),
+                  color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF475569),
                   letterSpacing: 0.1,
                 ),
               ),
@@ -1772,39 +1780,36 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
           ),
           const SizedBox(height: 8),
 
-          // Quick Remarks Chips
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: _quickRemarks.map((remark) {
-                return Padding(
-                  padding: const EdgeInsets.only(right: 5.0),
-                  child: ActionChip(
-                    label: Text(
-                      remark,
-                      style: const TextStyle(
-                        fontSize: 10.5,
-                        color: Color(0xFF334155),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                    visualDensity: VisualDensity.compact,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    backgroundColor: const Color(0xFFF8FAFC),
-                    side: const BorderSide(color: Color(0xFFE2E8F0)),
-                    onPressed: () {
-                      final current = _notesController.text;
-                      if (current.isEmpty) {
-                        _notesController.text = remark;
-                      } else {
-                        _notesController.text = '$current | $remark';
-                      }
-                    },
+          // Quick Remarks Chips — short labels, compact wrap
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: _quickRemarks.map((remark) {
+              return ActionChip(
+                label: Text(
+                  remark,
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    color: Color(0xFF334155),
+                    fontWeight: FontWeight.w500,
                   ),
-                );
-              }).toList(),
-            ),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+                labelPadding: const EdgeInsets.symmetric(horizontal: 2),
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                backgroundColor: const Color(0xFFF1F5F9),
+                side: const BorderSide(color: Color(0xFFCBD5E1)),
+                onPressed: () {
+                  final current = _notesController.text;
+                  if (current.isEmpty) {
+                    _notesController.text = remark;
+                  } else {
+                    _notesController.text = '$current | $remark';
+                  }
+                },
+              );
+            }).toList(),
           ),
           const SizedBox(height: 8),
 
