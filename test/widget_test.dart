@@ -10,7 +10,13 @@ import 'package:callnow_new/screens/call_reports_screen.dart';
 void main() {
   testWidgets('Splash screen displays branding', (WidgetTester tester) async {
     await tester.pumpWidget(
-      const MaterialApp(home: SplashScreen()),
+      MaterialApp(
+        home: const SplashScreen(),
+        routes: {
+          '/login': (_) => const Scaffold(),
+          '/home': (_) => const Scaffold(),
+        },
+      ),
     );
 
     expect(find.text('CallNow'), findsOneWidget);

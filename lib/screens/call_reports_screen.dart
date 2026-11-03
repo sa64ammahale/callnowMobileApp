@@ -935,18 +935,28 @@ class CallReportsScreenState extends State<CallReportsScreen>
   Widget _buildStatusPill(String status) {
     Color color = Colors.blueGrey;
     final s = status.toLowerCase();
-    if (s.contains('interest') || s.contains('hot')) {
+    if (s.contains('not interest') || s.contains('not intrest')) {
+      color = Colors.red;
+    } else if (s.contains('interest') || s.contains('intrest') || s.contains('enquiry') || s.contains('hot')) {
       color = Colors.green;
-    } else if (s.contains('follow')) {
+    } else if (s.contains('follow') || s.contains('callback') || s.contains('call back')) {
       color = Colors.orange;
+    } else if (s.contains('dnd')) {
+      color = Colors.deepOrange;
+    } else if (s.contains('ringing')) {
+      color = Colors.amber.shade800;
+    } else if (s.contains('switch off') || s.contains('switched off')) {
+      color = Colors.blueGrey;
+    } else if (s.contains('rechable') || s.contains('reachable')) {
+      color = Colors.deepOrange;
+    } else if (s.contains('invalid') || s.contains('delete') || s.contains('wrong')) {
+      color = Colors.red;
     } else if (s.contains('convert')) {
       color = Colors.teal;
     } else if (s.contains('busy') || s.contains('missed') || s.contains('cancel')) {
       color = Colors.amber.shade800;
     } else if (s.contains('voicemail') || s.contains('machine') || s.contains('ivr')) {
       color = Colors.deepPurple;
-    } else if (s.contains('wrong') || s.contains('not interest')) {
-      color = Colors.red;
     }
 
     return Container(
