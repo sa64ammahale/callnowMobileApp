@@ -273,7 +273,12 @@ class CallReportsScreenState extends State<CallReportsScreen>
               _buildErrorCard()
             else ...[
               if (_selectedPeriod == 'today') ...[
-                _buildDailyTargetProgressCard(totalCalls is int ? totalCalls : int.tryParse(totalCalls.toString()) ?? 0),
+                _buildDailyTargetProgressCard(
+                  totalCalls is int ? totalCalls : int.tryParse(totalCalls.toString()) ?? 0,
+                  _summaryData?['connected_calls'] is int ? _summaryData!['connected_calls'] as int : int.tryParse(_summaryData?['connected_calls']?.toString() ?? '0') ?? 0,
+                  _summaryData?['daily_calling_limit'] is int ? _summaryData!['daily_calling_limit'] as int : int.tryParse(_summaryData?['daily_calling_limit']?.toString() ?? '250') ?? 250,
+                  (_summaryData?['monthly_disbursement_limit'] is num) ? (_summaryData!['monthly_disbursement_limit'] as num).toDouble() : double.tryParse(_summaryData?['monthly_disbursement_limit']?.toString() ?? '1500000') ?? 1500000.0,
+                ),
                 const SizedBox(height: 14),
               ],
               _buildKpiMetricsGrid(colorScheme),
@@ -287,11 +292,12 @@ class CallReportsScreenState extends State<CallReportsScreen>
     );
   }
 
-  Widget _buildDailyTargetProgressCard(int totalCalls) {
-    const dailyTarget = 100;
-    final progress = (totalCalls / dailyTarget).clamp(0.0, 1.0);
-    final pct = (totalCalls / dailyTarget * 100).toStringAsFixed(0);
-    final bool reached = totalCalls >= dailyTarget;
+  Widget _buildDailyTargetProgressCard(int totalCalls, int connectedCalls, int dailyCallingLimit, double monthlyDisbursementLimit) {
+    final dailyTarget = dailyCallingLimit > 0 ? dailyCallingLimit : 250;
+    final progress = (connectedCalls / dailyTarget).clamp(0.0, 1.0);
+    final pct = (connectedCalls / dailyTarget * 100).toStringAsFixed(0);
+    final bool reached = connectedCalls >= dailyTarget;
+    final disbLakhs = (monthlyDisbursementLimit / 100000).toStringAsFixed(1);
 
     return Card(
       elevation: 2,
@@ -352,16 +358,36 @@ class CallReportsScreenState extends State<CallReportsScreen>
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  '$totalCalls dialed out of $dailyTarget target',
+                  '$connectedCalls connected of $dailyTarget limit',
                   style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
                 ),
                 Text(
-                  reached ? 'Target Achieved! 🎉' : '${dailyTarget - totalCalls} calls remaining',
+                  reached ? 'Target Achieved! 🎉' : '${dailyTarget - connectedCalls} connected calls left',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                     color: reached ? const Color(0xFF16A34A) : const Color(0xFFEA580C),
                   ),
+                ),
+              ],
+            ),
+            const Divider(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: const [
+                    Icon(Icons.currency_rupee_rounded, size: 16, color: Color(0xFF16A34A)),
+                    SizedBox(width: 4),
+                    Text(
+                      'Monthly Disbursement Target:',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                    ),
+                  ],
+                ),
+                Text(
+                  '₹$disbLakhs Lakhs',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF16A34A)),
                 ),
               ],
             ),
