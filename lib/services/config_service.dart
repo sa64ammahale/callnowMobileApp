@@ -92,6 +92,25 @@ class ConfigService {
     return role?.toString().toUpperCase() ?? 'TELECALLER';
   }
 
+  static bool get canMoveLeadStage {
+    final u = _cachedUserData;
+    if (u != null) {
+      if (u['can_move_lead_stage'] == true || u['can_change_lead_status'] == true) {
+        return true;
+      }
+      final userObj = u['user'] is Map ? u['user'] as Map : null;
+      if (userObj != null && (userObj['can_move_lead_stage'] == true || userObj['can_change_lead_status'] == true)) {
+        return true;
+      }
+    }
+    final r = userRole.toUpperCase();
+    return r.contains('SUPER ADMIN') ||
+        r.contains('SUPERADMIN') ||
+        r.contains('ADMIN') ||
+        r.contains('SUPERVISOR') ||
+        r.contains('MANAGER');
+  }
+
   static String get userId {
     final u = _cachedUserData;
     if (u == null) return 'N/A';

@@ -5,6 +5,7 @@ import 'package:callnow_new/model/crm_lead.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
+import 'package:callnow_new/services/config_service.dart';
 
 class LeadsScreen extends StatefulWidget {
   final VoidCallback? onOpenCallingDesk;
@@ -126,6 +127,17 @@ class _LeadsScreenState extends State<LeadsScreen> {
   }
 
   void _showAdvanceStageModal(CrmLead lead) {
+    if (!ConfigService.canMoveLeadStage) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Permission Denied: Sales Officers cannot change lead status. Only Super Admin, Admin, and Supervisor can move stages.',
+          ),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      return;
+    }
     String selectedStage = lead.status;
     final remarksCtrl = TextEditingController(text: lead.otherInfo);
     bool isSaving = false;
@@ -1368,20 +1380,51 @@ class _LeadsScreenState extends State<LeadsScreen> {
                 ),
                 const SizedBox(width: 6),
 
-                // Advance Stage
-                ElevatedButton.icon(
-                  onPressed: () => _showAdvanceStageModal(lead),
-                  icon: const Icon(Icons.swap_horiz, size: 15),
-                  label: const Text('Advance', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: stageColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    elevation: 0,
+                // Advance Stage - Only Super Admin, Admin, and Supervisor can move stage
+                if (ConfigService.canMoveLeadStage) ...[
+                  ElevatedButton.icon(
+                    onPressed: () => _showAdvanceStageModal(lead),
+                    icon: const Icon(Icons.swap_horiz, size: 15),
+                    label: const Text('Advance', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: stageColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      elevation: 0,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 6),
+                  const SizedBox(width: 6),
+                ] else ...[
+                  // Sales Officer / Telecaller: Read-only locked stage indicator
+                  Tooltip(
+                    message: 'Stage movement is restricted to Supervisor & Admin',
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.lock_outline, size: 12, color: Color(0xFF64748B)),
+                          const SizedBox(width: 4),
+                          Text(
+                            LeadStageHelper.getShortLabel(lead.status),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
 
                 // Follow-up
                 IconButton.filledTonal(
