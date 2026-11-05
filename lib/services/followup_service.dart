@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/model/followup_model.dart';
+import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/notification_service.dart';
 
 class FollowupService extends ChangeNotifier {
@@ -118,6 +119,51 @@ class FollowupService extends ChangeNotifier {
     }
   }
 
+  /// Sync open follow-ups from CRM backend
+  Future<void> syncWithServer() async {
+    try {
+      final res = await ApiService.fetchServerFollowups(status: 'OPEN', limit: 100);
+      final dynamic rawList = res['data'];
+      if (rawList is List) {
+        for (final item in rawList) {
+          if (item is Map<String, dynamic>) {
+            final serverModel = FollowupModel.fromJson(item);
+            final index = _followups.indexWhere((f) =>
+                (serverModel.serverId != null && f.serverId == serverModel.serverId) ||
+                (serverModel.clientContactId != null &&
+                    f.clientContactId == serverModel.clientContactId &&
+                    f.status == 'pending'));
+            if (index >= 0) {
+              _followups[index] = _followups[index].copyWith(
+                serverId: serverModel.serverId,
+                customerName: serverModel.customerName,
+                phoneNumber: serverModel.phoneNumber,
+                company: serverModel.company,
+                scheduledTime: serverModel.scheduledTime,
+                notes: serverModel.notes.isNotEmpty ? serverModel.notes : _followups[index].notes,
+                status: serverModel.status,
+                leadId: serverModel.leadId ?? _followups[index].leadId,
+                clientContactId: serverModel.clientContactId ?? _followups[index].clientContactId,
+                source: serverModel.source ?? _followups[index].source,
+              );
+            } else {
+              _followups.add(serverModel);
+              if (serverModel.scheduledTime.isAfter(DateTime.now())) {
+                await NotificationService.scheduleFollowupNotification(serverModel);
+              }
+            }
+          }
+        }
+        _cacheDirty = true;
+        _rebuildCaches();
+        await _saveToPrefs();
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error syncing followups with server: $e');
+    }
+  }
+
   Future<FollowupModel> addFollowup({
     required String customerName,
     required String phoneNumber,
@@ -125,12 +171,35 @@ class FollowupService extends ChangeNotifier {
     required DateTime scheduledTime,
     String notes = '',
     int? leadId,
+    int? clientContactId,
+    int? serverId,
     String? source,
   }) async {
     final id = 'f_${DateTime.now().millisecondsSinceEpoch}_${phoneNumber.replaceAll(RegExp(r'\D'), '')}';
+    int? finalServerId = serverId;
+
+    if (finalServerId == null) {
+      try {
+        final res = await ApiService.createServerFollowup(
+          clientContactId: clientContactId,
+          leadId: leadId,
+          followupAt: scheduledTime.toIso8601String(),
+          note: notes,
+          contactSource: source ?? (clientContactId != null ? 'MAIN' : 'LEAD'),
+        );
+        if (res['followup_id'] != null) {
+          finalServerId = int.tryParse(res['followup_id'].toString());
+        }
+      } catch (e) {
+        debugPrint('Failed to sync new followup to server: $e');
+      }
+    }
+
     final model = FollowupModel(
       id: id,
+      serverId: finalServerId,
       leadId: leadId,
+      clientContactId: clientContactId,
       customerName: customerName.trim(),
       phoneNumber: phoneNumber.trim(),
       company: company?.trim(),
@@ -198,6 +267,18 @@ class FollowupService extends ChangeNotifier {
     _cacheDirty = true;
     await _saveToPrefs();
 
+    if (existing.serverId != null) {
+      try {
+        await ApiService.rescheduleServerFollowup(
+          existing.serverId!,
+          newTime,
+          notes,
+        );
+      } catch (e) {
+        debugPrint('Error rescheduling on server: $e');
+      }
+    }
+
     await NotificationService.cancelFollowupNotification(id);
     await NotificationService.scheduleFollowupNotification(updated);
 
@@ -219,6 +300,14 @@ class FollowupService extends ChangeNotifier {
     _followups[index] = updated;
     _cacheDirty = true;
     await _saveToPrefs();
+
+    if (existing.serverId != null) {
+      try {
+        await ApiService.completeServerFollowup(existing.serverId!);
+      } catch (e) {
+        debugPrint('Error completing on server: $e');
+      }
+    }
 
     await NotificationService.cancelFollowupNotification(id);
     _promptedIdsInSession.remove(id);

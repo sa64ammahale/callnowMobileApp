@@ -481,6 +481,10 @@ class ApiService {
     String? loginBank,
     String? nextFollowup,
     String source = 'MAIN',
+    String? netSalary,
+    String? salaryAccount,
+    String? bankName,
+    int? clientContactId,
   }) async {
     final payload = <String, dynamic>{
       'name': name.trim(),
@@ -496,6 +500,10 @@ class ApiService {
     if (priority != null) payload['priority'] = priority;
     if (loginBank != null) payload['login_bank_name'] = loginBank;
     if (nextFollowup != null) payload['next_followup_at'] = nextFollowup;
+    if (netSalary != null) payload['net_salary'] = netSalary;
+    if (salaryAccount != null) payload['salary_account'] = salaryAccount;
+    if (bankName != null) payload['bank_name'] = bankName;
+    if (clientContactId != null) payload['client_contact_id'] = clientContactId;
 
     final response = await _client.post(
       Uri.parse('$_baseUrl/telecaller/leads'),
@@ -733,6 +741,7 @@ class ApiService {
     String? nextFollowupAt,
     String? callStartTime,
     String? callEndTime,
+    Map<String, dynamic>? loanQualification,
   }) async {
     final body = <String, dynamic>{
       'source': source,
@@ -744,6 +753,7 @@ class ApiService {
     if (nextFollowupAt != null) body['next_followup'] = nextFollowupAt;
     if (callStartTime != null) body['call_start_time'] = callStartTime;
     if (callEndTime != null) body['call_end_time'] = callEndTime;
+    if (loanQualification != null) body['loan_qualification'] = loanQualification;
 
     final response = await _client.post(
       Uri.parse('$_baseUrl/telecaller/calls/$callId/complete'),
@@ -771,6 +781,7 @@ class ApiService {
     String? notes,
     String? nextFollowup,
     String? recordingUrl,
+    Map<String, dynamic>? loanQualification,
   }) async {
     final body = <String, dynamic>{
       'record_id': recordId,
@@ -781,6 +792,7 @@ class ApiService {
     if (notes != null) body['notes'] = notes;
     if (nextFollowup != null) body['next_followup'] = nextFollowup;
     if (recordingUrl != null) body['recording_url'] = recordingUrl;
+    if (loanQualification != null) body['loan_qualification'] = loanQualification;
 
     final response = await _client.post(
       Uri.parse('$_baseUrl/telecaller/submit_call.php'),
@@ -816,6 +828,119 @@ class ApiService {
       throw Exception('Session expired. Please login again.');
     } else {
       throw Exception('Failed to load settings: ${response.statusCode}');
+    }
+  }
+
+  // --- FOLLOW-UP SYNCHRONIZATION ---
+  static Future<Map<String, dynamic>> fetchServerFollowups({
+    String status = 'OPEN',
+    String due = 'all',
+    int page = 1,
+    int limit = 50,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/telecaller/follow-ups').replace(queryParameters: {
+      'status': status,
+      'due': due,
+      'page': page.toString(),
+      'limit': limit.toString(),
+    });
+
+    final response = await _client.get(uri, headers: _headers);
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['success'] == true) return _toMap(data['data']);
+      throw Exception(data['message'] ?? 'Failed to load follow-ups');
+    } else if (response.statusCode == 401) {
+      await ConfigService.clearAuthData();
+      throw Exception('Session expired. Please login again.');
+    } else {
+      throw Exception('Failed to load follow-ups: ${response.statusCode}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> createServerFollowup({
+    int? leadId,
+    int? contactId,
+    int? clientContactId,
+    String contactSource = 'MAIN',
+    required dynamic followupAt,
+    String? note,
+  }) async {
+    final DateTime scheduled = followupAt is DateTime
+        ? followupAt
+        : (DateTime.tryParse(followupAt.toString()) ?? DateTime.now());
+    final int? cId = clientContactId ?? contactId;
+    final body = <String, dynamic>{
+      'followup_at': scheduled.toIso8601String().replaceAll('T', ' ').substring(0, 19),
+      'contact_source': contactSource,
+    };
+    if (leadId != null) body['lead_id'] = leadId;
+    if (cId != null) body['client_contact_id'] = cId;
+    if (note != null && note.isNotEmpty) body['note'] = note;
+
+    final response = await _client.post(
+      Uri.parse('$_baseUrl/telecaller/follow-ups'),
+      headers: _headers,
+      body: json.encode(body),
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['success'] == true) return _toMap(data['data']);
+      throw Exception(data['message'] ?? 'Failed to create follow-up');
+    } else if (response.statusCode == 401) {
+      await ConfigService.clearAuthData();
+      throw Exception('Session expired. Please login again.');
+    } else {
+      throw Exception('Failed to create follow-up: ${response.statusCode}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> completeServerFollowup(int followupId) async {
+    final response = await _client.put(
+      Uri.parse('$_baseUrl/telecaller/follow-ups/$followupId/complete'),
+      headers: _headers,
+      body: json.encode({}),
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['success'] == true) return _toMap(data['data']);
+      throw Exception(data['message'] ?? 'Failed to complete follow-up');
+    } else if (response.statusCode == 401) {
+      await ConfigService.clearAuthData();
+      throw Exception('Session expired. Please login again.');
+    } else {
+      throw Exception('Failed to complete follow-up: ${response.statusCode}');
+    }
+  }
+
+  static Future<Map<String, dynamic>> rescheduleServerFollowup(
+    int followupId,
+    DateTime newTime,
+    String? note,
+  ) async {
+    final body = <String, dynamic>{
+      'followup_at': newTime.toIso8601String().replaceAll('T', ' ').substring(0, 19),
+    };
+    if (note != null && note.isNotEmpty) body['note'] = note;
+
+    final response = await _client.put(
+      Uri.parse('$_baseUrl/telecaller/follow-ups/$followupId/reschedule'),
+      headers: _headers,
+      body: json.encode(body),
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['success'] == true) return _toMap(data['data']);
+      throw Exception(data['message'] ?? 'Failed to reschedule follow-up');
+    } else if (response.statusCode == 401) {
+      await ConfigService.clearAuthData();
+      throw Exception('Session expired. Please login again.');
+    } else {
+      throw Exception('Failed to reschedule follow-up: ${response.statusCode}');
     }
   }
 }

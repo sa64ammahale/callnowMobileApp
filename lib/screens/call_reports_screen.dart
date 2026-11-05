@@ -251,6 +251,9 @@ class CallReportsScreenState extends State<CallReportsScreen>
   }
 
   Widget _buildPerformanceSummaryTab(ColorScheme colorScheme) {
+    final summary = _summaryData ?? {};
+    final totalCalls = summary['total_calls'] ?? 0;
+
     return RefreshIndicator(
       onRefresh: _loadReportData,
       child: SingleChildScrollView(
@@ -269,11 +272,99 @@ class CallReportsScreenState extends State<CallReportsScreen>
             else if (_errorMessage != null && _summaryData == null)
               _buildErrorCard()
             else ...[
+              if (_selectedPeriod == 'today') ...[
+                _buildDailyTargetProgressCard(totalCalls is int ? totalCalls : int.tryParse(totalCalls.toString()) ?? 0),
+                const SizedBox(height: 14),
+              ],
               _buildKpiMetricsGrid(colorScheme),
               const SizedBox(height: 16),
               _buildTimingTiersCard(colorScheme),
             ],
             const SizedBox(height: 30),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDailyTargetProgressCard(int totalCalls) {
+    const dailyTarget = 100;
+    final progress = (totalCalls / dailyTarget).clamp(0.0, 1.0);
+    final pct = (totalCalls / dailyTarget * 100).toStringAsFixed(0);
+    final bool reached = totalCalls >= dailyTarget;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(14.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      reached ? Icons.military_tech_rounded : Icons.track_changes_rounded,
+                      color: reached ? const Color(0xFF16A34A) : const Color(0xFF2563EB),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Daily Calling Target',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                  ],
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: reached ? const Color(0xFFDCFCE7) : const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '$pct% Completed',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: reached ? const Color(0xFF15803D) : const Color(0xFF2563EB),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 10,
+                backgroundColor: const Color(0xFFE2E8F0),
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  reached ? const Color(0xFF16A34A) : const Color(0xFF2563EB),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '$totalCalls dialed out of $dailyTarget target',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                ),
+                Text(
+                  reached ? 'Target Achieved! 🎉' : '${dailyTarget - totalCalls} calls remaining',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: reached ? const Color(0xFF16A34A) : const Color(0xFFEA580C),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -748,6 +839,8 @@ class CallReportsScreenState extends State<CallReportsScreen>
     final notes = (call['notes'] ?? '').toString();
     final followup = (call['next_followup'] ?? '').toString();
     final source = (call['source'] ?? 'TEMPORARY').toString().toUpperCase();
+    final leadId = call['lead_id'];
+    final contactId = call['client_contact_id'] ?? call['cust_id'] ?? call['id'];
 
     final isMain = source == 'MAIN';
 
@@ -762,6 +855,49 @@ class CallReportsScreenState extends State<CallReportsScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Entity distinction badge (Client Contact vs Converted Lead)
+              if (leadId != null || contactId != null) ...[
+                Row(
+                  children: [
+                    if (contactId != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        margin: const EdgeInsets.only(right: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: const Color(0xFFCBD5E1)),
+                        ),
+                        child: Text(
+                          'Contact #$contactId',
+                          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF475569)),
+                        ),
+                      ),
+                    if (leadId != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFDCFCE7),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: const Color(0xFF86EFAC)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.check_circle, size: 10, color: Color(0xFF16A34A)),
+                            const SizedBox(width: 3),
+                            Text(
+                              'Lead #$leadId',
+                              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF15803D)),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+              ],
+
               // Top Row: Client Name, Source Badge, Status Chip
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,

@@ -1,6 +1,8 @@
 class FollowupModel {
   final String id;
+  final int? serverId;
   final int? leadId;
+  final int? clientContactId;
   final String customerName;
   final String phoneNumber;
   final String? company;
@@ -13,7 +15,9 @@ class FollowupModel {
 
   FollowupModel({
     required this.id,
+    this.serverId,
     this.leadId,
+    this.clientContactId,
     required this.customerName,
     required this.phoneNumber,
     this.company,
@@ -70,7 +74,9 @@ class FollowupModel {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'server_id': serverId,
       'lead_id': leadId,
+      'client_contact_id': clientContactId,
       'customer_name': customerName,
       'phone_number': phoneNumber,
       'company': company,
@@ -89,26 +95,54 @@ class FollowupModel {
       return DateTime.tryParse(val.toString());
     }
 
+    final rawServerId = json['server_id'] ?? (json['id'] is int ? json['id'] : int.tryParse(json['id']?.toString() ?? ''));
+    final int? sId = rawServerId is int ? rawServerId : null;
+
+    final rawStatus = (json['status']?.toString() ?? 'pending').toUpperCase();
+    String normalizedStatus;
+    if (rawStatus == 'OPEN' || rawStatus == 'PENDING') {
+      normalizedStatus = 'pending';
+    } else if (rawStatus == 'DONE' || rawStatus == 'COMPLETED') {
+      normalizedStatus = 'completed';
+    } else if (rawStatus == 'SNOOZED') {
+      normalizedStatus = 'snoozed';
+    } else if (rawStatus == 'CANCELLED') {
+      normalizedStatus = 'cancelled';
+    } else {
+      normalizedStatus = json['status']?.toString().toLowerCase() ?? 'pending';
+    }
+
+    final rawId = json['id']?.toString() ?? '';
+    final String localId = rawId.isNotEmpty && !rawId.contains(RegExp(r'^\d+$'))
+        ? rawId
+        : (sId != null ? 'srv_$sId' : 'f_${DateTime.now().millisecondsSinceEpoch}');
+
     return FollowupModel(
-      id: (json['id'] ?? 'f_${DateTime.now().millisecondsSinceEpoch}').toString(),
+      id: localId,
+      serverId: sId,
       leadId: json['lead_id'] is int
           ? json['lead_id'] as int
           : int.tryParse(json['lead_id']?.toString() ?? ''),
-      customerName: json['customer_name']?.toString() ?? 'Unknown Customer',
-      phoneNumber: json['phone_number']?.toString() ?? '',
-      company: json['company']?.toString(),
-      scheduledTime: parseDate(json['scheduled_time']) ?? DateTime.now(),
+      clientContactId: json['client_contact_id'] is int
+          ? json['client_contact_id'] as int
+          : int.tryParse(json['client_contact_id']?.toString() ?? ''),
+      customerName: json['customer_name']?.toString() ?? json['name']?.toString() ?? 'Unknown Customer',
+      phoneNumber: json['phone_number']?.toString() ?? json['customer_mobile']?.toString() ?? json['mobile']?.toString() ?? '',
+      company: json['company']?.toString() ?? json['company_name']?.toString(),
+      scheduledTime: parseDate(json['scheduled_time']) ?? parseDate(json['followup_at']) ?? DateTime.now(),
       createdAt: parseDate(json['created_at']) ?? DateTime.now(),
-      notes: json['notes']?.toString() ?? '',
-      status: json['status']?.toString() ?? 'pending',
+      notes: json['notes']?.toString() ?? json['note']?.toString() ?? '',
+      status: normalizedStatus,
       completedAt: parseDate(json['completed_at']),
-      source: json['source']?.toString(),
+      source: json['source']?.toString() ?? json['contact_source']?.toString(),
     );
   }
 
   FollowupModel copyWith({
     String? id,
+    int? serverId,
     int? leadId,
+    int? clientContactId,
     String? customerName,
     String? phoneNumber,
     String? company,
@@ -121,7 +155,9 @@ class FollowupModel {
   }) {
     return FollowupModel(
       id: id ?? this.id,
+      serverId: serverId ?? this.serverId,
       leadId: leadId ?? this.leadId,
+      clientContactId: clientContactId ?? this.clientContactId,
       customerName: customerName ?? this.customerName,
       phoneNumber: phoneNumber ?? this.phoneNumber,
       company: company ?? this.company,
@@ -134,4 +170,3 @@ class FollowupModel {
     );
   }
 }
-

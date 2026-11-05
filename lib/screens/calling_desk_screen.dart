@@ -653,12 +653,25 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
           notes: _notesController.text.trim().isNotEmpty
               ? _notesController.text.trim()
               : 'Follow-up requested from Calling Desk ($statusLabel)',
-          leadId: int.tryParse(leadId.toString()),
+          clientContactId: int.tryParse(leadId.toString()),
           source: source,
         );
       } catch (e) {
         debugPrint('Error saving local followup: $e');
       }
+    }
+
+    // When customer is interested, capture loan qualification and convert Contact to Lead
+    if (wasInterested) {
+      _showCreateLeadModal(
+        leadData: currentLeadSnapshot,
+        initialRemarks: currentRemarksSnapshot,
+        verifiedDur: verifiedDur,
+        effectiveTiming: effectiveTiming,
+        followupIso: followupIso,
+        statusLabel: statusLabel,
+      );
+      return;
     }
 
     setState(() => _isSubmitting = true);
@@ -672,6 +685,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         durationSeconds: verifiedDur,
         timingClassification: effectiveTiming,
         nextFollowupAt: followupIso,
+        loanQualification: null, // Strictly Client Contact!
       );
 
       if (mounted) {
@@ -696,14 +710,6 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         if (_leads.length - _currentIndex <= 3) {
           _fetchMoreLeads();
         }
-
-        // If user selected "Enquiry/ Intrested", immediately open the Create Lead form prefilled!
-        if (wasInterested) {
-          _showCreateLeadModal(
-            leadData: currentLeadSnapshot,
-            initialRemarks: currentRemarksSnapshot,
-          );
-        }
       }
     } catch (e) {
       if (mounted) {
@@ -722,6 +728,10 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
   void _showCreateLeadModal({
     required Map<String, dynamic> leadData,
     String? initialRemarks,
+    int? verifiedDur,
+    String? effectiveTiming,
+    String? followupIso,
+    String? statusLabel,
   }) {
     final formKey = GlobalKey<FormState>();
     final nameCtrl = TextEditingController(text: leadData['name']?.toString() ?? '');
@@ -738,6 +748,9 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
           : '',
     );
     final amountCtrl = TextEditingController(text: leadData['package']?.toString() ?? '');
+    final salaryCtrl = TextEditingController();
+    final salaryAccountCtrl = TextEditingController();
+    final bankCtrl = TextEditingController();
     final remarksCtrl = TextEditingController(
       text: (initialRemarks != null && initialRemarks.isNotEmpty)
           ? initialRemarks
@@ -793,7 +806,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Create CRM Lead',
+                                  'Loan Qualification & Lead Conversion',
                                   style: TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
@@ -801,7 +814,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                                   ),
                                 ),
                                 Text(
-                                  'Client interested — Convert to sales pipeline',
+                                  'Customer interested — capture details and convert to Lead',
                                   style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
                                 ),
                               ],
@@ -870,9 +883,42 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                           Expanded(
                             child: TextFormField(
                               controller: amountCtrl,
+                              keyboardType: TextInputType.number,
                               decoration: InputDecoration(
-                                labelText: 'Loan Amount / Pkg',
+                                labelText: 'Required Loan (₹) *',
                                 prefixIcon: const Icon(Icons.currency_rupee, size: 20),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                isDense: true,
+                              ),
+                              validator: (v) => v == null || v.trim().isEmpty ? 'Loan amount is required' : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 11),
+
+                      // Monthly Net Salary & Salary Bank Row
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: salaryCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(
+                                labelText: 'Net Monthly Salary (₹)',
+                                prefixIcon: const Icon(Icons.account_balance_wallet_outlined, size: 20),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextFormField(
+                              controller: salaryAccountCtrl,
+                              decoration: InputDecoration(
+                                labelText: 'Salary Account Bank',
+                                prefixIcon: const Icon(Icons.account_balance_outlined, size: 20),
                                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                                 isDense: true,
                               ),
@@ -882,14 +928,14 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                       ),
                       const SizedBox(height: 11),
 
-                      // Loan Type & Lead Temperature Row
+                      // Loan Type & Applied Bank Row
                       Row(
                         children: [
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               initialValue: selectedLoanType,
                               decoration: InputDecoration(
-                                labelText: 'Loan Type',
+                                labelText: 'Loan Type *',
                                 prefixIcon: const Icon(Icons.category_outlined, size: 20),
                                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                                 isDense: true,
@@ -904,25 +950,37 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                           ),
                           const SizedBox(width: 8),
                           Expanded(
-                            child: DropdownButtonFormField<String>(
-                              initialValue: selectedTemp,
+                            child: TextFormField(
+                              controller: bankCtrl,
                               decoration: InputDecoration(
-                                labelText: 'Temperature',
-                                prefixIcon: const Icon(Icons.whatshot_rounded, size: 20, color: Colors.deepOrange),
+                                labelText: 'Preferred Bank',
+                                prefixIcon: const Icon(Icons.storefront_outlined, size: 20),
                                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                                 isDense: true,
                               ),
-                              items: const [
-                                DropdownMenuItem(value: 'Hot', child: Text('🔥 Hot', style: TextStyle(fontSize: 12.5))),
-                                DropdownMenuItem(value: 'Warm', child: Text('☀️ Warm', style: TextStyle(fontSize: 12.5))),
-                                DropdownMenuItem(value: 'Cold', child: Text('❄️ Cold', style: TextStyle(fontSize: 12.5))),
-                              ],
-                              onChanged: (val) {
-                                if (val != null) setModalState(() => selectedTemp = val);
-                              },
                             ),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 11),
+
+                      // Lead Temperature Row
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedTemp,
+                        decoration: InputDecoration(
+                          labelText: 'Temperature',
+                          prefixIcon: const Icon(Icons.whatshot_rounded, size: 20, color: Colors.deepOrange),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          isDense: true,
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'Hot', child: Text('🔥 Hot', style: TextStyle(fontSize: 12.5))),
+                          DropdownMenuItem(value: 'Warm', child: Text('☀️ Warm', style: TextStyle(fontSize: 12.5))),
+                          DropdownMenuItem(value: 'Cold', child: Text('❄️ Cold', style: TextStyle(fontSize: 12.5))),
+                        ],
+                        onChanged: (val) {
+                          if (val != null) setModalState(() => selectedTemp = val);
+                        },
                       ),
                       const SizedBox(height: 11),
 
@@ -957,17 +1015,28 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                                 setModalState(() => isModalSubmitting = true);
 
                                 try {
-                                  await ApiService.createLead(
-                                    name: nameCtrl.text.trim(),
-                                    mobile: mobileCtrl.text.trim(),
-                                    company: companyCtrl.text.trim(),
-                                    package: amountCtrl.text.trim(),
-                                    otherInfo: remarksCtrl.text.trim(),
-                                    status: selectedStage,
-                                    loanType: selectedLoanType,
-                                    stage: selectedTemp,
-                                    priority: selectedPriority,
-                                    source: 'MAIN',
+                                  final leadId = int.tryParse(leadData['id'].toString()) ?? 0;
+                                  final source = (leadData['source'] ?? 'TEMPORARY').toString();
+
+                                  // Submit call with loan qualification (converts Client Contact -> Lead on server)
+                                  await ApiService.submitCallResult(
+                                    callId: leadId,
+                                    source: source,
+                                    status: statusLabel ?? 'Enquiry/ Intrested',
+                                    notes: remarksCtrl.text.trim().isNotEmpty ? remarksCtrl.text.trim() : null,
+                                    durationSeconds: verifiedDur ?? 0,
+                                    timingClassification: effectiveTiming ?? 'CONNECTED_CONVERSATION',
+                                    nextFollowupAt: followupIso,
+                                    loanQualification: {
+                                      'loan_type': selectedLoanType,
+                                      'loan_amount': amountCtrl.text.trim(),
+                                      'net_salary': salaryCtrl.text.trim(),
+                                      'salary_account': salaryAccountCtrl.text.trim(),
+                                      'bank_name': bankCtrl.text.trim(),
+                                      'stage': selectedTemp,
+                                      'priority': selectedPriority,
+                                      'lead_status': selectedStage,
+                                    },
                                   );
 
                                   if (modalCtx.mounted) Navigator.pop(modalCtx);
@@ -980,7 +1049,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                                             const Icon(Icons.check_circle_rounded, color: Colors.white),
                                             const SizedBox(width: 8),
                                             Expanded(
-                                              child: Text('CRM Lead created for ${nameCtrl.text.trim()}! Added to pipeline.'),
+                                              child: Text('Contact converted to Lead for ${nameCtrl.text.trim()}! Added to pipeline.'),
                                             ),
                                           ],
                                         ),
@@ -988,13 +1057,23 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                                         behavior: SnackBarBehavior.floating,
                                       ),
                                     );
+
+                                    setState(() {
+                                      _isSubmitting = false;
+                                      _currentIndex++;
+                                      _resetFormForCurrentLead();
+                                    });
+
+                                    if (_leads.length - _currentIndex <= 3) {
+                                      _fetchMoreLeads();
+                                    }
                                   }
                                 } catch (e) {
                                   setModalState(() => isModalSubmitting = false);
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
-                                        content: Text('Failed to create lead: $e'),
+                                        content: Text('Failed to convert contact: $e'),
                                         backgroundColor: Colors.red.shade700,
                                         behavior: SnackBarBehavior.floating,
                                       ),
@@ -1010,7 +1089,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                               )
                             : const Icon(Icons.check_circle_rounded, size: 20),
                         label: Text(
-                          isModalSubmitting ? 'Creating Lead...' : 'Create Lead & Add to CRM',
+                          isModalSubmitting ? 'Converting Contact...' : 'Convert to Lead & Save',
                           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                         ),
                       ),

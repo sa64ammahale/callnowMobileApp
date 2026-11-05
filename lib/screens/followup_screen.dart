@@ -36,6 +36,9 @@ class _FollowUpScreenState extends State<FollowUpScreen>
         _searchQuery = _searchController.text.trim().toLowerCase();
       });
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      FollowupService.instance.syncWithServer();
+    });
   }
 
   @override
@@ -369,6 +372,20 @@ class _FollowUpScreenState extends State<FollowUpScreen>
             ),
             actions: [
               IconButton(
+                icon: const Icon(Icons.sync_rounded, color: Color(0xFF2563EB)),
+                tooltip: 'Sync with CRM',
+                onPressed: () async {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Syncing follow-ups with server...'),
+                      duration: Duration(seconds: 1),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                  await FollowupService.instance.syncWithServer();
+                },
+              ),
+              IconButton(
                 icon: const Icon(Icons.add_alarm, color: Color(0xFF2563EB)),
                 tooltip: 'Add Callback',
                 onPressed: () => _showAddFollowupModal(context),
@@ -542,32 +559,47 @@ class _FollowUpScreenState extends State<FollowUpScreen>
 
   Widget _buildFollowupList(List<FollowupModel> list, {required String emptyMsg}) {
     if (list.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.event_available, size: 48, color: Colors.grey.shade400),
-              const SizedBox(height: 12),
-              Text(
-                emptyMsg,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 14, color: Color(0xFF64748B)),
+      return RefreshIndicator(
+        onRefresh: () => FollowupService.instance.syncWithServer(),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.4,
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.event_available, size: 48, color: Colors.grey.shade400),
+                      const SizedBox(height: 12),
+                      Text(
+                        emptyMsg,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 14, color: Color(0xFF64748B)),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(14, 6, 14, 80),
-      itemCount: list.length,
-      itemBuilder: (context, index) {
-        final item = list[index];
-        return _buildFollowupCard(item);
-      },
+    return RefreshIndicator(
+      onRefresh: () => FollowupService.instance.syncWithServer(),
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(14, 6, 14, 80),
+        itemCount: list.length,
+        itemBuilder: (context, index) {
+          final item = list[index];
+          return _buildFollowupCard(item);
+        },
+      ),
     );
   }
 
@@ -609,6 +641,44 @@ class _FollowUpScreenState extends State<FollowUpScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Entity Badge: Client Contact vs Converted Lead
+            if (item.leadId != null || item.clientContactId != null) ...[
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: item.leadId != null ? const Color(0xFFDCFCE7) : const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: item.leadId != null ? const Color(0xFF86EFAC) : const Color(0xFFCBD5E1),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          item.leadId != null ? Icons.verified_user_rounded : Icons.contact_phone_outlined,
+                          size: 11,
+                          color: item.leadId != null ? const Color(0xFF16A34A) : const Color(0xFF475569),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          item.leadId != null ? 'Lead #${item.leadId}' : 'Contact #${item.clientContactId}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: item.leadId != null ? const Color(0xFF15803D) : const Color(0xFF334155),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+            ],
+
             // Top Row: Name, Company, Urgency Badge
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
