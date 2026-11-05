@@ -26,11 +26,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   StreamSubscription<String?>? _notificationSub;
 
+  /// Timer that fires exactly at 00:00 to auto-logout the user.
+  Timer? _midnightLogoutTimer;
+
+  /// The calendar date when the session started. Used to detect day-change on resume.
+  late DateTime _sessionStartDate;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _sessionStartDate = DateTime.now();
     _initCallTracker();
+    _scheduleMidnightLogout();
     // Listen to push notification clicks
     _notificationSub = NotificationService.onNotificationTap.listen((payload) {
       if (payload != null && mounted) {
@@ -49,6 +57,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _checkPermissionsOnResume();
       // Event-driven due-callback check on app resume (replaces 25s polling)
       _checkDueCallbacks();
+      // If the phone was left overnight and the date has changed, logout now.
+      _checkDateChangeLogout();
     }
   }
 
@@ -91,7 +101,70 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _notificationSub?.cancel();
+    _midnightLogoutTimer?.cancel();
     super.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Midnight auto-logout
+  // ---------------------------------------------------------------------------
+
+  /// Schedules a one-shot [Timer] that fires at the next 00:00:00 local time.
+  /// When it fires the user is silently logged out and sent to /login.
+  void _scheduleMidnightLogout() {
+    _midnightLogoutTimer?.cancel();
+    final now = DateTime.now();
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1); // 00:00 tomorrow
+    final delay = nextMidnight.difference(now);
+    _midnightLogoutTimer = Timer(delay, _performMidnightLogout);
+    debugPrint('[HomeScreen] Midnight logout scheduled in ${delay.inMinutes} min '
+        '(at $nextMidnight)');
+  }
+
+  /// Called either by the timer (exact midnight) or on app-resume if the date
+  /// has already rolled over (phone left overnight).
+  Future<void> _performMidnightLogout() async {
+    if (!mounted) return;
+    debugPrint('[HomeScreen] Midnight reached — auto-logging out.');
+    await ApiService.logout();
+    if (mounted) {
+      // Show a brief banner before navigating so the user knows why they were logged out.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.lock_clock_outlined, color: Colors.white, size: 18),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Session expired at midnight. Please log in again.',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Color(0xFF1E40AF),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      await Future.delayed(const Duration(seconds: 1));
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/login');
+      }
+    }
+  }
+
+  /// Handles the edge-case where the app was backgrounded across midnight.
+  /// Called every time the app is resumed from the background.
+  void _checkDateChangeLogout() {
+    final today = DateTime.now();
+    if (today.day != _sessionStartDate.day ||
+        today.month != _sessionStartDate.month ||
+        today.year != _sessionStartDate.year) {
+      debugPrint('[HomeScreen] Date changed since session start — triggering midnight logout.');
+      _performMidnightLogout();
+    }
   }
 
   Future<void> _initCallTracker() async {

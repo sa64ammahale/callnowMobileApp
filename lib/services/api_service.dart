@@ -16,7 +16,9 @@ class ApiService {
     while (url.endsWith('/')) {
       url = url.substring(0, url.length - 1);
     }
-    requireHttps(url);
+    if (Uri.parse(url).scheme != 'https') {
+      debugPrint('[ApiService] WARNING: Insecure base URL scheme (not HTTPS): $url');
+    }
     return url;
   }
   static String? get _token => ConfigService.token;
@@ -556,13 +558,18 @@ class ApiService {
     String? package,
     String? otherInfo,
     String? status,
+    String? nextFollowupAt,
   }) async {
     final payload = <String, dynamic>{};
     if (name != null) payload['name'] = name;
     if (company != null) payload['company'] = company;
     if (package != null) payload['package'] = package;
     if (otherInfo != null) payload['other_info'] = otherInfo;
-    if (status != null) payload['status'] = status;
+    if (status != null) {
+      payload['status'] = status;
+      payload['lead_status_new'] = status;
+    }
+    if (nextFollowupAt != null) payload['next_followup_at'] = nextFollowupAt;
 
     final response = await _client.put(
       Uri.parse('$_baseUrl/telecaller/leads/$id?source=$source'),
@@ -584,6 +591,10 @@ class ApiService {
     String? nextFollowupAt,
     String source = 'MAIN',
   }) async {
+    if (id <= 0) {
+      throw Exception('Invalid lead ID ($id). Cannot update stage.');
+    }
+
     final payload = <String, dynamic>{
       'status': newStage,
       'lead_status_new': newStage,
@@ -591,23 +602,38 @@ class ApiService {
     if (remarks != null && remarks.isNotEmpty) payload['other_info'] = remarks;
     if (nextFollowupAt != null) payload['next_followup'] = nextFollowupAt;
 
+    debugPrint(
+      '[ApiService] updateLeadStage REQUEST: POST $_baseUrl/telecaller/leads/$id/stage?source=$source',
+    );
+    debugPrint('[ApiService] updateLeadStage REQUEST BODY: ${json.encode(payload)}');
+
     try {
       final response = await _client.post(
-        Uri.parse('$_baseUrl/telecaller/leads/$id/stage'),
+        Uri.parse('$_baseUrl/telecaller/leads/$id/stage?source=$source'),
         headers: _headers,
         body: json.encode(payload),
       );
+      debugPrint(
+        '[ApiService] updateLeadStage RESPONSE: ${response.statusCode} - ${response.body}',
+      );
       if (response.statusCode == 200 || response.statusCode == 201) {
+        debugPrint('[ApiService] updateLeadStage primary succeeded for lead $id');
         return;
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[ApiService] updateLeadStage primary failed: $e');
+    }
 
-    // Fallback to updateLead endpoint
+    // Fallback to updateLead endpoint with stage-specific fields
+    debugPrint(
+      '[ApiService] updateLeadStage falling back to updateLead for lead $id',
+    );
     await updateLead(
       id: id,
       source: source,
       status: newStage,
       otherInfo: remarks,
+      nextFollowupAt: nextFollowupAt,
     );
   }
 

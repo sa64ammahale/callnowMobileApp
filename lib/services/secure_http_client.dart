@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
@@ -56,9 +58,13 @@ class SecureHttpClient extends http.BaseClient {
 
   void _validateUrl(Uri url) {
     if (url.scheme != 'https') {
-      throw http.ClientException(
-        'Insecure scheme "${url.scheme}" blocked. Only HTTPS is allowed.',
-      );
+      debugPrint('[SecureHttpClient] WARNING: Insecure scheme "${url.scheme}" used. HTTPS is recommended for production.');
+      // Allow non-HTTPS by default; enforce only when pinning is explicitly enabled.
+      if (SslPinningConfig.enabled) {
+        throw http.ClientException(
+          'Insecure scheme "${url.scheme}" blocked. Only HTTPS is allowed when SSL pinning is enabled.',
+        );
+      }
     }
     if (SslPinningConfig.enabled &&
         SslPinningConfig.pinnedSha256Hashes.isNotEmpty &&

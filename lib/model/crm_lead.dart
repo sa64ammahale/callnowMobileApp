@@ -1,6 +1,9 @@
 import 'package:callnow_new/constants/lead_stages.dart';
 
 class CrmLead {
+  static final RegExp _nonDigitRegex = RegExp(r'\D');
+  static final RegExp _nonNumericRegex = RegExp(r'[^\d.]');
+
   final int id;
   final int? custId;
   final String name;
@@ -39,7 +42,7 @@ class CrmLead {
     this.callCount = 0,
   });
 
-  String get cleanMobile => mobile.replaceAll(RegExp(r'\D'), '');
+  String get cleanMobile => mobile.replaceAll(_nonDigitRegex, '');
 
   int get stepNumber => LeadStageHelper.getStep(status);
 
@@ -47,7 +50,7 @@ class CrmLead {
 
   String get formattedPackage {
     if (package.isEmpty) return 'Loan Amount Unspecified';
-    final cleaned = package.replaceAll(RegExp(r'[^\d.]'), '');
+    final cleaned = package.replaceAll(_nonNumericRegex, '');
     final numVal = double.tryParse(cleaned);
     if (numVal != null && numVal > 0) {
       if (numVal >= 10000000) {

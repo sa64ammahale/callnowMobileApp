@@ -49,6 +49,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
 
     try {
       final res = await ApiService.getCreatedLeads(limit: 100, source: 'all');
+      debugPrint('[LeadsScreen] getCreatedLeads RAW RESPONSE: $res');
       final raw = res['leads'];
       List<CrmLead> list = [];
       if (raw is List) {
@@ -56,6 +57,11 @@ class _LeadsScreenState extends State<LeadsScreen> {
             .whereType<Map>()
             .map((e) => CrmLead.fromJson(Map<String, dynamic>.from(e)))
             .toList();
+        for (final l in list) {
+          debugPrint(
+            '[LeadsScreen] Parsed lead: id=${l.id}, status=${l.status}, stage=${l.stage}, source=${l.source}',
+          );
+        }
       }
 
       if (mounted) {
@@ -283,8 +289,12 @@ class _LeadsScreenState extends State<LeadsScreen> {
                           : () async {
                               setModalState(() => isSaving = true);
                               try {
+                                debugPrint(
+                                  '[LeadsScreen] Advancing lead: id=${lead.id}, source=${lead.source ?? "MAIN"}, newStage=$selectedStage, remarks=${remarksCtrl.text.trim()}',
+                                );
                                 await ApiService.updateLeadStage(
                                   id: lead.id,
+                                  source: lead.source ?? 'MAIN',
                                   newStage: selectedStage,
                                   remarks: remarksCtrl.text.trim(),
                                 );

@@ -14,7 +14,7 @@ class SecureStorageService {
   static const _userIdKey = 'callnow_user_id';
 
   /// Backend for secure storage. Swappable for testing.
-  static _SecureStorageBackend _backend = _FlutterSecureStorageBackend(
+  static SecureStorageBackend _backend = _FlutterSecureStorageBackend(
     const FlutterSecureStorage(
       aOptions: AndroidOptions(
         encryptedSharedPreferences: true,
@@ -26,7 +26,7 @@ class SecureStorageService {
   );
 
   /// Override the backend for testing (e.g. with an in-memory mock).
-  static void setBackendForTesting(_SecureStorageBackend backend) {
+  static void setBackendForTesting(SecureStorageBackend backend) {
     _backend = backend;
   }
 
@@ -98,7 +98,7 @@ class SecureStorageService {
 }
 
 /// Backend interface for secure storage operations.
-abstract class _SecureStorageBackend {
+abstract class SecureStorageBackend {
   Future<void> write({required String key, required String value});
   Future<String?> read({required String key});
   Future<void> delete({required String key});
@@ -106,7 +106,7 @@ abstract class _SecureStorageBackend {
 }
 
 /// Production backend wrapping FlutterSecureStorage.
-class _FlutterSecureStorageBackend implements _SecureStorageBackend {
+class _FlutterSecureStorageBackend implements SecureStorageBackend {
   final FlutterSecureStorage _storage;
   _FlutterSecureStorageBackend(this._storage);
 
@@ -132,7 +132,7 @@ class _FlutterSecureStorageBackend implements _SecureStorageBackend {
 }
 
 /// In-memory mock backend for unit tests.
-class MemorySecureStorageBackend implements _SecureStorageBackend {
+class MemorySecureStorageBackend implements SecureStorageBackend {
   final Map<String, String> _data = {};
 
   @override
