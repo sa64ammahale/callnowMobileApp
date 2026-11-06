@@ -11,6 +11,7 @@ import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/screens/leads_screen.dart';
 import 'package:callnow_new/screens/followup_screen.dart';
 import 'package:callnow_new/screens/permission_screen.dart';
+import 'package:callnow_new/screens/server_settings_screen.dart';
 import 'package:callnow_new/services/notification_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
 
@@ -159,6 +160,7 @@ class MyApp extends StatelessWidget {
         '/profile': (context) => const ProfileScreen(),
         '/followups': (context) => const FollowUpScreen(),
         '/permissions': (context) => const PermissionScreen(),
+        '/server_settings': (context) => const ServerSettingsScreen(),
       },
       debugShowCheckedModeBanner: false,
     );

@@ -29,6 +29,55 @@ class ApiService {
         if (_token != null) 'Authorization': 'Bearer $_token',
       };
 
+  // --- SERVER DIAGNOSTICS ---
+  static Future<Map<String, dynamic>> testConnection(String candidateUrl) async {
+    String url = candidateUrl.trim();
+    while (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
+    }
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
+      return {
+        'success': false,
+        'message': 'Invalid URL format. Please include http:// or https://'
+      };
+    }
+
+    final stopwatch = Stopwatch()..start();
+    final client = http.Client();
+    try {
+      final probeUri = Uri.parse('$url/auth/profile');
+      final res = await client
+          .get(probeUri, headers: {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 8));
+      stopwatch.stop();
+
+      if (res.statusCode >= 200 && res.statusCode < 500) {
+        return {
+          'success': true,
+          'statusCode': res.statusCode,
+          'latencyMs': stopwatch.elapsedMilliseconds,
+          'message': 'Server reached (${stopwatch.elapsedMilliseconds}ms, HTTP ${res.statusCode})',
+        };
+      } else {
+        return {
+          'success': false,
+          'statusCode': res.statusCode,
+          'latencyMs': stopwatch.elapsedMilliseconds,
+          'message': 'Server responded with HTTP ${res.statusCode}',
+        };
+      }
+    } catch (e) {
+      stopwatch.stop();
+      return {
+        'success': false,
+        'message': 'Connection failed: ${e.toString().replaceFirst('Exception: ', '')}',
+      };
+    } finally {
+      client.close();
+    }
+  }
+
   // --- AUTH ---
   static Future<Map<String, dynamic>> login({
     required String email,

@@ -510,9 +510,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF1F5F9)),
                       ListTile(
-                        leading: const Icon(Icons.dns_outlined, color: Color(0xFF64748B), size: 20),
+                        leading: Container(
+                          padding: const EdgeInsets.all(7),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEFF6FF),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.dns_rounded, color: Color(0xFF2563EB), size: 18),
+                        ),
                         title: const Text('API Server Endpoint', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
                         subtitle: Text(ConfigService.baseUrl, style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B), fontFamily: 'monospace')),
+                        trailing: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.edit_outlined, size: 16, color: Color(0xFF64748B)),
+                            SizedBox(width: 4),
+                            Icon(Icons.chevron_right, size: 20, color: Color(0xFF94A3B8)),
+                          ],
+                        ),
+                        onTap: () async {
+                          final changed = await Navigator.pushNamed(context, '/server_settings');
+                          if (changed == true && mounted) {
+                            setState(() {});
+                          }
+                        },
                       ),
                     ],
                   ),

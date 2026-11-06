@@ -95,6 +95,22 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.dns_rounded, color: Color(0xFF64748B)),
+            tooltip: 'Server / API Settings',
+            onPressed: () async {
+              await Navigator.pushNamed(context, '/server_settings');
+              if (mounted) setState(() {});
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
