@@ -1154,291 +1154,380 @@ class _LeadsScreenState extends State<LeadsScreen> {
     final stageColor = LeadStageHelper.getColor(lead.status);
     final stageLabel = LeadStageHelper.getLabel(lead.status);
 
-    return Card(
+    Color cardBg;
+    Color cardBorder;
+    Color accentColor;
+
+    if (lead.isRework) {
+      // Warning Card when Rework
+      cardBg = const Color(0xFFFFFBEB);
+      cardBorder = const Color(0xFFFDE68A);
+      accentColor = const Color(0xFFD97706);
+    } else if (lead.isRejected) {
+      // Danger Card for Reject
+      cardBg = const Color(0xFFFEF2F2);
+      cardBorder = const Color(0xFFFECDD3);
+      accentColor = const Color(0xFFDC2626);
+    } else if (lead.isDisbursed) {
+      // Success Card for Disbursal
+      cardBg = const Color(0xFFF0FDF4);
+      cardBorder = const Color(0xFFBBF7D0);
+      accentColor = const Color(0xFF16A34A);
+    } else if (lead.status.toUpperCase() == 'LEAD') {
+      // Regular Card for Lead
+      cardBg = Colors.white;
+      cardBorder = const Color(0xFFE2E8F0);
+      accentColor = const Color(0xFF6D45F9);
+    } else if (lead.status.toUpperCase() == 'FOLLOWUP') {
+      cardBg = const Color(0xFFF0F9FF);
+      cardBorder = const Color(0xFFBAE6FD);
+      accentColor = const Color(0xFF0284C7);
+    } else if (lead.status.toUpperCase() == 'LOGIN') {
+      cardBg = const Color(0xFFFFFDF0);
+      cardBorder = const Color(0xFFFEF08A);
+      accentColor = const Color(0xFFCA8A04);
+    } else if (lead.status.toUpperCase() == 'BANK_UNDERWRITING') {
+      cardBg = const Color(0xFFFAF5FF);
+      cardBorder = const Color(0xFFE9D5FF);
+      accentColor = const Color(0xFF9333EA);
+    } else if (lead.status.toUpperCase() == 'SANCTIONED') {
+      cardBg = const Color(0xFFECFDF5);
+      cardBorder = const Color(0xFFA7F3D0);
+      accentColor = const Color(0xFF059669);
+    } else {
+      cardBg = const Color(0xFFF8FAFC);
+      cardBorder = const Color(0xFFCBD5E1);
+      accentColor = stageColor;
+    }
+
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
+      decoration: BoxDecoration(
+        color: cardBg,
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: cardBorder, width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: accentColor.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
-      color: Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Top Row: Avatar + Name + Company & Status Badge
-            Row(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(15),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(color: accentColor, width: 4.5),
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  backgroundColor: stageColor.withValues(alpha: 0.15),
-                  radius: 20,
-                  child: Text(
-                    lead.name.isNotEmpty ? lead.name[0].toUpperCase() : '?',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: stageColor,
-                      fontSize: 16,
+                if (lead.isRework) ...[
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFF59E0B)),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        lead.name,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                      if (lead.company.isNotEmpty)
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.warning_amber_rounded, size: 14, color: Color(0xFFB45309)),
+                        SizedBox(width: 6),
                         Text(
-                          lead.company,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF475569),
-                            fontWeight: FontWeight.w500,
+                          'ACTION REQUIRED: REWORK',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFFB45309),
+                            letterSpacing: 0.3,
                           ),
                         ),
-                    ],
-                  ),
-                ),
-                // Status Badge
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: stageColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: stageColor.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(LeadStageHelper.getIcon(lead.status),
-                          size: 13, color: stageColor),
-                      const SizedBox(width: 4),
-                      Text(
-                        stageLabel,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: stageColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-
-            // Journey Progress Stepper
-            _buildJourneyStepper(lead),
-            const SizedBox(height: 10),
-
-            // Financial Pill
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.currency_rupee, size: 14, color: Color(0xFF16A34A)),
-                  Text(
-                    lead.formattedPackage,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: Color(0xFF0F172A),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(height: 12, width: 1, color: const Color(0xFFCBD5E1)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '${lead.loanType}${lead.loginBank != null && lead.loginBank!.isNotEmpty ? " • ${lead.loginBank}" : ""}',
-                      style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
-                      overflow: TextOverflow.ellipsis,
+                      ],
                     ),
                   ),
                 ],
-              ),
-            ),
-            const SizedBox(height: 8),
-
-            // Secondary Metadata (Temperature, Priority, Mobile)
-            Row(
-              children: [
-                // Phone
-                const Icon(Icons.phone, size: 13, color: Color(0xFF64748B)),
-                const SizedBox(width: 4),
-                Text(
-                  lead.mobile,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF334155),
-                  ),
-                ),
-                const Spacer(),
-                // Temperature Chip
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: LeadStageHelper.getTemperatureColor(lead.stage)
-                        .withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    lead.stage == 'Hot'
-                        ? '🔥 Hot'
-                        : (lead.stage == 'Warm' ? '⚡ Warm' : '❄️ Cold'),
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: LeadStageHelper.getTemperatureColor(lead.stage),
+                // Top Row: Avatar + Name + Company & Status Badge
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: stageColor.withValues(alpha: 0.15),
+                      radius: 20,
+                      child: Text(
+                        lead.name.isNotEmpty ? lead.name[0].toUpperCase() : '?',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: stageColor,
+                          fontSize: 16,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                // Priority Chip
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: LeadStageHelper.getPriorityColor(lead.priority)
-                        .withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '${lead.priority} Prio',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: LeadStageHelper.getPriorityColor(lead.priority),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            lead.name,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                          if (lead.company.isNotEmpty)
+                            Text(
+                              lead.company,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF475569),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
-                ),
-              ],
-            ),
-
-            if (lead.otherInfo.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(
-                '“${lead.otherInfo}”',
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontStyle: FontStyle.italic,
-                  color: Color(0xFF64748B),
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-
-            const SizedBox(height: 10),
-            const Divider(height: 1),
-            const SizedBox(height: 8),
-
-            // Action Buttons Row
-            Row(
-              children: [
-                // Call Now
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => _makeCall(lead),
-                    icon: const Icon(Icons.phone, size: 15),
-                    label: const Text('Call', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF16A34A),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      elevation: 0,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-
-                // WhatsApp
-                IconButton.filledTonal(
-                  icon: const Icon(Icons.chat_bubble_outline, size: 15, color: Color(0xFF25D366)),
-                  tooltip: 'WhatsApp',
-                  onPressed: () => _openWhatsApp(lead),
-                  style: IconButton.styleFrom(
-                    backgroundColor: const Color(0xFFDCFCE7),
-                    padding: const EdgeInsets.all(8),
-                  ),
-                ),
-                const SizedBox(width: 6),
-
-                // Advance Stage - Only Super Admin, Admin, and Supervisor can move stage
-                if (ConfigService.canMoveLeadStage) ...[
-                  ElevatedButton.icon(
-                    onPressed: () => _showAdvanceStageModal(lead),
-                    icon: const Icon(Icons.swap_horiz, size: 15),
-                    label: const Text('Advance', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: stageColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      elevation: 0,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                ] else ...[
-                  // Sales Officer / Telecaller: Read-only locked stage indicator
-                  Tooltip(
-                    message: 'Stage movement is restricted to Supervisor & Admin',
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    // Status Badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF1F5F9),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                        color: stageColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: stageColor.withValues(alpha: 0.3)),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.lock_outline, size: 12, color: Color(0xFF64748B)),
+                          Icon(LeadStageHelper.getIcon(lead.status),
+                              size: 13, color: stageColor),
                           const SizedBox(width: 4),
                           Text(
-                            LeadStageHelper.getShortLabel(lead.status),
-                            style: const TextStyle(
+                            stageLabel,
+                            style: TextStyle(
                               fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.bold,
+                              color: stageColor,
                             ),
                           ),
                         ],
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+
+                // Journey Progress Stepper
+                _buildJourneyStepper(lead),
+                const SizedBox(height: 10),
+
+                // Financial Pill
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: cardBorder),
                   ),
-                  const SizedBox(width: 6),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.currency_rupee, size: 14, color: Color(0xFF16A34A)),
+                      Text(
+                        lead.formattedPackage,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(height: 12, width: 1, color: const Color(0xFFCBD5E1)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${lead.loanType}${lead.loginBank != null && lead.loginBank!.isNotEmpty ? " • ${lead.loginBank}" : ""}',
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Secondary Metadata (Temperature, Priority, Mobile)
+                Row(
+                  children: [
+                    // Phone
+                    const Icon(Icons.phone, size: 13, color: Color(0xFF64748B)),
+                    const SizedBox(width: 4),
+                    Text(
+                      lead.mobile,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF334155),
+                      ),
+                    ),
+                    const Spacer(),
+                    // Temperature Chip
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: LeadStageHelper.getTemperatureColor(lead.stage)
+                            .withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        lead.stage == 'Hot'
+                            ? '🔥 Hot'
+                            : (lead.stage == 'Warm' ? '⚡ Warm' : '❄️ Cold'),
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: LeadStageHelper.getTemperatureColor(lead.stage),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    // Priority Chip
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: LeadStageHelper.getPriorityColor(lead.priority)
+                            .withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '${lead.priority} Prio',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: LeadStageHelper.getPriorityColor(lead.priority),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                if (lead.otherInfo.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    '“${lead.otherInfo}”',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic,
+                      color: Color(0xFF64748B),
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ],
 
-                // Follow-up
-                IconButton.filledTonal(
-                  icon: const Icon(Icons.alarm_add, size: 15, color: Color(0xFF2563EB)),
-                  tooltip: 'Schedule Callback',
-                  onPressed: () => _showScheduleFollowupModal(lead),
-                  style: IconButton.styleFrom(
-                    backgroundColor: const Color(0xFFEFF6FF),
-                    padding: const EdgeInsets.all(8),
-                  ),
+                const SizedBox(height: 10),
+                Divider(height: 1, color: cardBorder),
+                const SizedBox(height: 8),
+
+                // Action Buttons Row
+                Row(
+                  children: [
+                    // Call Now
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => _makeCall(lead),
+                        icon: const Icon(Icons.phone, size: 15),
+                        label: const Text('Call', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF16A34A),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          elevation: 0,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+
+                    // WhatsApp
+                    IconButton.filledTonal(
+                      icon: const Icon(Icons.chat_bubble_outline, size: 15, color: Color(0xFF25D366)),
+                      tooltip: 'WhatsApp',
+                      onPressed: () => _openWhatsApp(lead),
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xFFDCFCE7),
+                        padding: const EdgeInsets.all(8),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+
+                    // Advance Stage - Only Super Admin, Admin, and Supervisor can move stage
+                    if (ConfigService.canMoveLeadStage) ...[
+                      ElevatedButton.icon(
+                        onPressed: () => _showAdvanceStageModal(lead),
+                        icon: const Icon(Icons.swap_horiz, size: 15),
+                        label: const Text('Advance', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: stageColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          elevation: 0,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ] else ...[
+                      // Sales Officer / Telecaller: Read-only locked stage indicator
+                      Tooltip(
+                        message: 'Stage movement is restricted to Supervisor & Admin',
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.lock_outline, size: 12, color: Color(0xFF64748B)),
+                              const SizedBox(width: 4),
+                              Text(
+                                LeadStageHelper.getShortLabel(lead.status),
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF64748B),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+
+                    // Follow-up
+                    IconButton.filledTonal(
+                      icon: const Icon(Icons.alarm_add, size: 15, color: Color(0xFF2563EB)),
+                      tooltip: 'Schedule Callback',
+                      onPressed: () => _showScheduleFollowupModal(lead),
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xFFEFF6FF),
+                        padding: const EdgeInsets.all(8),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-          ],
+          ),
         ),
       ),
     );

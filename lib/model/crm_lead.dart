@@ -21,6 +21,7 @@ class CrmLead {
   final String? source;
   final String? uploadTime;
   final int callCount;
+  final bool reworkFlag;
 
   CrmLead({
     required this.id,
@@ -40,6 +41,7 @@ class CrmLead {
     this.source,
     this.uploadTime,
     this.callCount = 0,
+    this.reworkFlag = false,
   });
 
   String get cleanMobile => mobile.replaceAll(_nonDigitRegex, '');
@@ -47,6 +49,14 @@ class CrmLead {
   int get stepNumber => LeadStageHelper.getStep(status);
 
   bool get isRejected => status.toUpperCase() == 'REJECT';
+
+  bool get isDisbursed => status.toUpperCase() == 'DISBURSED';
+
+  bool get isRework =>
+      reworkFlag ||
+      status.toUpperCase() == 'REWORK' ||
+      otherInfo.toLowerCase().contains('rework') ||
+      stage.toLowerCase().contains('rework');
 
   String get formattedPackage {
     if (package.isEmpty) return 'Loan Amount Unspecified';
@@ -74,6 +84,14 @@ class CrmLead {
       rawStatus = 'FOLLOWUP';
     }
 
+    final bool parsedRework = json['rework_flag'] == 1 ||
+        json['rework_flag'] == '1' ||
+        json['rework_flag'] == true ||
+        (json['rework'] != null &&
+            json['rework'].toString().isNotEmpty &&
+            json['rework'].toString() != '0' &&
+            json['rework'].toString() != 'false');
+
     return CrmLead(
       id: int.tryParse(json['lead_id']?.toString() ?? json['id']?.toString() ?? json['record_id']?.toString() ?? '0') ?? 0,
       custId: int.tryParse(json['cust_id']?.toString() ?? '0'),
@@ -92,6 +110,7 @@ class CrmLead {
       source: json['source']?.toString(),
       uploadTime: json['upload_time']?.toString() ?? json['created_at']?.toString(),
       callCount: int.tryParse(json['call_count']?.toString() ?? '0') ?? 0,
+      reworkFlag: parsedRework,
     );
   }
 
@@ -114,6 +133,7 @@ class CrmLead {
       'source': source,
       'upload_time': uploadTime,
       'call_count': callCount,
+      'rework_flag': reworkFlag ? 1 : 0,
     };
   }
 
@@ -135,6 +155,7 @@ class CrmLead {
     String? source,
     String? uploadTime,
     int? callCount,
+    bool? reworkFlag,
   }) {
     return CrmLead(
       id: id ?? this.id,
@@ -154,6 +175,7 @@ class CrmLead {
       source: source ?? this.source,
       uploadTime: uploadTime ?? this.uploadTime,
       callCount: callCount ?? this.callCount,
+      reworkFlag: reworkFlag ?? this.reworkFlag,
     );
   }
 }
