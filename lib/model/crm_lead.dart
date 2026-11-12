@@ -18,6 +18,10 @@ class CrmLead {
   final String? nextFollowup;
   final String otherInfo;
   final String assignedUser;
+  final int? assignedUserId;
+  final int? teamId;
+  final String? teamName;
+  final bool isOwnLead;
   final String? source;
   final String? uploadTime;
   final int callCount;
@@ -38,6 +42,10 @@ class CrmLead {
     this.nextFollowup,
     required this.otherInfo,
     required this.assignedUser,
+    this.assignedUserId,
+    this.teamId,
+    this.teamName,
+    this.isOwnLead = true,
     this.source,
     this.uploadTime,
     this.callCount = 0,
@@ -106,7 +114,11 @@ class CrmLead {
       loginBank: json['login_bank_name']?.toString() ?? json['login_bank']?.toString(),
       nextFollowup: json['next_followup_at']?.toString() ?? json['next_followup']?.toString(),
       otherInfo: (json['other_info'] ?? json['remarks'] ?? '').toString().trim(),
-      assignedUser: (json['assigned_user'] ?? 'Gunjan Vishwakarma').toString().trim(),
+      assignedUser: (json['assigned_user_name'] ?? json['assigned_user'] ?? 'Unassigned').toString().trim(),
+      assignedUserId: int.tryParse(json['assigned_user_id']?.toString() ?? json['assigned_to']?.toString() ?? '0'),
+      teamId: int.tryParse(json['team_id']?.toString() ?? '0'),
+      teamName: json['team_name']?.toString(),
+      isOwnLead: json['is_own_lead'] == true || json['is_own_lead'] == 1 || json['is_own_lead'] == '1',
       source: json['source']?.toString(),
       uploadTime: json['upload_time']?.toString() ?? json['created_at']?.toString(),
       callCount: int.tryParse(json['call_count']?.toString() ?? '0') ?? 0,
@@ -130,6 +142,11 @@ class CrmLead {
       'next_followup_at': nextFollowup,
       'other_info': otherInfo,
       'assigned_user': assignedUser,
+      'assigned_user_name': assignedUser,
+      'assigned_user_id': assignedUserId,
+      'team_id': teamId,
+      'team_name': teamName,
+      'is_own_lead': isOwnLead,
       'source': source,
       'upload_time': uploadTime,
       'call_count': callCount,

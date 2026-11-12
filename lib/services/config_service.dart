@@ -112,6 +112,23 @@ class ConfigService {
         r.contains('MANAGER');
   }
 
+  static bool get isManagementOrSupervisor {
+    final r = userRole.toUpperCase();
+    return r.contains('SUPER ADMIN') ||
+        r.contains('SUPERADMIN') ||
+        r.contains('ADMIN') ||
+        r.contains('SUPERVISOR') ||
+        r.contains('MANAGER');
+  }
+
+  static bool get isAdminOrManager {
+    final r = userRole.toUpperCase();
+    return r.contains('SUPER ADMIN') ||
+        r.contains('SUPERADMIN') ||
+        r.contains('ADMIN') ||
+        r.contains('MANAGER');
+  }
+
   static String get userId {
     final u = _cachedUserData;
     if (u == null) return 'N/A';

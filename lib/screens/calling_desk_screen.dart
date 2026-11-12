@@ -686,6 +686,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         timingClassification: effectiveTiming,
         nextFollowupAt: followupIso,
         loanQualification: null, // Strictly Client Contact!
+        phoneNumber: lead['mobile']?.toString(),
       );
 
       if (mounted) {
@@ -1038,6 +1039,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                                       'priority': selectedPriority,
                                       'lead_status': selectedStage,
                                     },
+                                    phoneNumber: leadData['mobile']?.toString(),
                                   );
 
                                   if (modalCtx.mounted) Navigator.pop(modalCtx);

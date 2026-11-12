@@ -583,6 +583,9 @@ class ApiService {
     String? period,
     String? dateFrom,
     String? dateTo,
+    String? scope,
+    int? teamId,
+    int? userId,
   }) async {
     final queryParams = <String, String>{
       'page': page.toString(),
@@ -594,6 +597,9 @@ class ApiService {
     if (period != null && period.isNotEmpty && period != 'all') queryParams['period'] = period;
     if (dateFrom != null && dateFrom.isNotEmpty) queryParams['date_from'] = dateFrom;
     if (dateTo != null && dateTo.isNotEmpty) queryParams['date_to'] = dateTo;
+    if (scope != null && scope.isNotEmpty) queryParams['scope'] = scope;
+    if (teamId != null && teamId > 0) queryParams['team_id'] = teamId.toString();
+    if (userId != null && userId > 0) queryParams['user_id'] = userId.toString();
 
     final uri = Uri.parse('$_baseUrl/telecaller/leads').replace(queryParameters: queryParams);
     final response = await _client.get(uri, headers: _headers);
@@ -609,6 +615,25 @@ class ApiService {
       throw Exception('Session expired. Please login again.');
     } else {
       throw Exception('Failed to get leads: ${response.statusCode}');
+    }
+  }
+
+  /// Fetch accessible teams and officers for TL & Manager leads filtering
+  static Future<Map<String, dynamic>> getTeamOfficers() async {
+    final uri = Uri.parse('$_baseUrl/telecaller/team-officers');
+    final response = await _client.get(uri, headers: _headers);
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['success'] == true && data['data'] != null) {
+        return _toMap(data['data']);
+      }
+      return {'teams': [], 'officers': []};
+    } else if (response.statusCode == 401) {
+      await ConfigService.clearAuthData();
+      throw Exception('Session expired. Please login again.');
+    } else {
+      throw Exception('Failed to get team officers: ${response.statusCode}');
     }
   }
 
@@ -797,6 +822,7 @@ class ApiService {
     String? callStartTime,
     String? callEndTime,
     Map<String, dynamic>? loanQualification,
+    String? phoneNumber,
   }) async {
     final body = <String, dynamic>{
       'source': source,
@@ -809,6 +835,10 @@ class ApiService {
     if (callStartTime != null) body['call_start_time'] = callStartTime;
     if (callEndTime != null) body['call_end_time'] = callEndTime;
     if (loanQualification != null) body['loan_qualification'] = loanQualification;
+    if (phoneNumber != null && phoneNumber.trim().isNotEmpty) {
+      body['phone_number'] = phoneNumber.trim();
+      body['mobile'] = phoneNumber.trim();
+    }
 
     final response = await _client.post(
       Uri.parse('$_baseUrl/telecaller/calls/$callId/complete'),
@@ -824,7 +854,16 @@ class ApiService {
       await ConfigService.clearAuthData();
       throw Exception('Session expired. Please login again.');
     } else {
-      throw Exception('Failed to submit call result: ${response.statusCode}');
+      String errMsg = 'Failed to submit call result: ${response.statusCode}';
+      try {
+        final errData = json.decode(response.body);
+        if (errData is Map && errData['message'] != null) {
+          errMsg = errData['message'].toString();
+        } else if (errData is Map && errData['error'] != null) {
+          errMsg = errData['error'].toString();
+        }
+      } catch (_) {}
+      throw Exception(errMsg);
     }
   }
 
@@ -1018,5 +1057,29 @@ class ApiService {
     } else {
       throw Exception('Failed to reschedule follow-up: ${response.statusCode}');
     }
+  }
+
+  /// Lookup a contact by phone number in CRM (checks Leads, Main Database, and Temp Database)
+  static Future<Map<String, dynamic>?> lookupContact(String phoneNumber) async {
+    final clean = phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
+    if (clean.length < 10) return null;
+    final last10 = clean.length > 10 ? clean.substring(clean.length - 10) : clean;
+
+    try {
+      final response = await _client.get(
+        Uri.parse('$_baseUrl/telecaller/lookup-contact?phone=$last10'),
+        headers: _headers,
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true && data['data'] is Map) {
+          return Map<String, dynamic>.from(data['data']);
+        }
+      }
+    } catch (e) {
+      debugPrint('[ApiService] lookupContact error: $e');
+    }
+    return null;
   }
 }

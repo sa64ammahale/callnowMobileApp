@@ -143,11 +143,20 @@ Future<void> phoneStateBackgroundCallbackHandler(
 
     case PhoneStateBackgroundEvent.incomingend:
       log('[CallTracker] Incoming call ended from: $number, duration: $duration s');
+      if (duration > 0 && number.isNotEmpty) {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('pending_post_call_number', number);
+          await prefs.setInt('pending_post_call_duration', duration);
+          await prefs.setString('pending_post_call_direction', 'INCOMING');
+          await prefs.setInt('pending_post_call_time', DateTime.now().millisecondsSinceEpoch);
+        } catch (_) {}
+      }
       await CallTrackingService._syncCallActivityBackground(
         number: number,
         duration: duration,
         direction: 'INCOMING',
-        status: 'Received',
+        status: duration > 0 ? 'Incoming Connected' : 'Incoming Missed',
       );
       break;
   }
@@ -285,10 +294,11 @@ class CallTrackingService {
         body: json.encode({
           'phone_number': number,
           'mobile': number,
-          'source': source,
+          'source': source.toUpperCase() == 'TEMPORARY' ? 'TEMP' : source.toUpperCase(),
           'call_status': status,
           'call_duration': duration,
-          'notes': 'Auto-logged via background call tracking',
+          'direction': direction,
+          'notes': 'Auto-logged via background call tracking ($direction${duration > 0 ? " ${duration}s" : ""})',
           'next_followup': null,
           'recording_url': null,
         }),
@@ -301,8 +311,7 @@ class CallTrackingService {
 
   /// Determine database source from phone number format
   static String _determineSource(String number) {
-    // Default to temporary database for auto-logged calls
-    return 'temporary';
+    return 'MAIN';
   }
 
   /// Sync call activity from foreground (with full context)
@@ -419,5 +428,101 @@ class CallTrackingService {
       log('[CallTracker] Error launching WhatsApp: $e');
       return false;
     }
+  }
+
+  /// Query recent calls from native Android CallLog
+  static Future<List<Map<String, dynamic>>> getRecentCallLogs({
+    int limit = 15,
+    int afterTimestamp = 0,
+  }) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return [];
+    try {
+      final res = await _verifierChannel.invokeMethod('getRecentCallLogs', {
+        'limit': limit,
+        'afterTimestamp': afterTimestamp,
+      });
+      if (res is List) {
+        return res.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+      }
+    } catch (e) {
+      log('[CallTracker] getRecentCallLogs error: $e');
+    }
+    return [];
+  }
+
+  /// Store a pending post-call prompt record
+  static Future<void> savePendingPostCall({
+    required String number,
+    required int duration,
+    required String direction,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('pending_post_call_number', number);
+      await prefs.setInt('pending_post_call_duration', duration);
+      await prefs.setString('pending_post_call_direction', direction);
+      await prefs.setInt('pending_post_call_time', DateTime.now().millisecondsSinceEpoch);
+    } catch (_) {}
+  }
+
+  /// Check if there is an unhandled pending post-call prompt
+  static Future<Map<String, dynamic>?> getPendingPostCall() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final number = prefs.getString('pending_post_call_number');
+      final duration = prefs.getInt('pending_post_call_duration') ?? 0;
+      final direction = prefs.getString('pending_post_call_direction') ?? 'INCOMING';
+      final timestamp = prefs.getInt('pending_post_call_time') ?? 0;
+
+      if (number != null && number.isNotEmpty) {
+        final ageMs = DateTime.now().millisecondsSinceEpoch - timestamp;
+        if (ageMs < 30 * 60 * 1000) {
+          return {
+            'number': number,
+            'duration': duration,
+            'direction': direction,
+            'timestamp': timestamp,
+          };
+        } else {
+          await clearPendingPostCall();
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Clear pending post-call record
+  static Future<void> clearPendingPostCall() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('pending_post_call_number');
+      await prefs.remove('pending_post_call_duration');
+      await prefs.remove('pending_post_call_direction');
+      await prefs.remove('pending_post_call_time');
+    } catch (_) {}
+  }
+
+  /// Check if a call timestamp has already been processed/prompted
+  static Future<bool> isCallProcessed(String key) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('processed_call_keys') ?? [];
+      return list.contains(key);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Mark a call as processed/prompted
+  static Future<void> markCallProcessed(String key) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('processed_call_keys') ?? [];
+      if (!list.contains(key)) {
+        list.add(key);
+        if (list.length > 100) list.removeAt(0);
+        await prefs.setStringList('processed_call_keys', list);
+      }
+    } catch (_) {}
   }
 }

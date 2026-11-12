@@ -38,6 +38,12 @@ class MainActivity: FlutterActivity() {
                     val message = call.argument<String>("message").orEmpty()
                     result.success(openWhatsApp(phoneNumber, message))
                 }
+                "getRecentCallLogs" -> {
+                    val limit = (call.argument<Number>("limit"))?.toInt() ?: 15
+                    val afterTimestamp = (call.argument<Number>("afterTimestamp"))?.toLong() ?: 0L
+                    val callLogs = queryRecentCallLogs(limit, afterTimestamp)
+                    result.success(callLogs)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -168,5 +174,82 @@ class MainActivity: FlutterActivity() {
             "timestamp" to 0L,
             "type" to 0
         )
+    }
+
+    private fun queryRecentCallLogs(limit: Int, afterTimestamp: Long): List<Map<String, Any?>> {
+        val resultList = mutableListOf<Map<String, Any?>>()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG) 
+            != PackageManager.PERMISSION_GRANTED) {
+            return resultList
+        }
+
+        val projection = arrayOf(
+            CallLog.Calls.NUMBER,
+            CallLog.Calls.TYPE,
+            CallLog.Calls.DATE,
+            CallLog.Calls.DURATION,
+            CallLog.Calls.CACHED_NAME
+        )
+
+        val selection = if (afterTimestamp > 0) "${CallLog.Calls.DATE} >= ?" else null
+        val selectionArgs = if (afterTimestamp > 0) arrayOf(afterTimestamp.toString()) else null
+        val sortOrder = "${CallLog.Calls.DATE} DESC LIMIT $limit"
+
+        var cursor: Cursor? = null
+        try {
+            cursor = contentResolver.query(
+                CallLog.Calls.CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                sortOrder
+            )
+
+            if (cursor != null && cursor.moveToFirst()) {
+                val numIdx = cursor.getColumnIndex(CallLog.Calls.NUMBER)
+                val typeIdx = cursor.getColumnIndex(CallLog.Calls.TYPE)
+                val dateIdx = cursor.getColumnIndex(CallLog.Calls.DATE)
+                val durIdx = cursor.getColumnIndex(CallLog.Calls.DURATION)
+                val nameIdx = cursor.getColumnIndex(CallLog.Calls.CACHED_NAME)
+
+                do {
+                    val rawNum = if (numIdx != -1) cursor.getString(numIdx) ?: "" else ""
+                    val callType = if (typeIdx != -1) cursor.getInt(typeIdx) else 0
+                    val callDate = if (dateIdx != -1) cursor.getLong(dateIdx) else 0L
+                    val duration = if (durIdx != -1) cursor.getLong(durIdx) else 0L
+                    val cachedName = if (nameIdx != -1) cursor.getString(nameIdx) ?: "" else ""
+
+                    val cleanNum = rawNum.replace(Regex("[^0-9]"), "")
+                    val last10 = if (cleanNum.length >= 10) cleanNum.takeLast(10) else cleanNum
+
+                    val typeStr = when (callType) {
+                        CallLog.Calls.INCOMING_TYPE -> "INCOMING"
+                        CallLog.Calls.OUTGOING_TYPE -> "OUTGOING"
+                        CallLog.Calls.MISSED_TYPE -> "MISSED"
+                        CallLog.Calls.REJECTED_TYPE -> "REJECTED"
+                        else -> "OTHER"
+                    }
+
+                    resultList.add(
+                        mapOf(
+                            "number" to rawNum,
+                            "cleanNumber" to last10,
+                            "type" to callType,
+                            "typeName" to typeStr,
+                            "isIncoming" to (callType == CallLog.Calls.INCOMING_TYPE),
+                            "duration" to duration,
+                            "timestamp" to callDate,
+                            "cachedName" to cachedName
+                        )
+                    )
+                } while (cursor.moveToNext() && resultList.size < limit)
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CallVerifier", "queryRecentCallLogs error: ${e.message}")
+        } finally {
+            cursor?.close()
+        }
+
+        return resultList
     }
 }

@@ -9,6 +9,7 @@ import 'package:callnow_new/services/followup_service.dart';
 import 'package:callnow_new/services/notification_service.dart';
 import 'package:callnow_new/services/permission_service.dart';
 import 'package:callnow_new/widgets/callback_alert_dialog.dart';
+import 'package:callnow_new/widgets/incoming_call_action_dialog.dart';
 import 'package:callnow_new/screens/calling_desk_screen.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/screens/leads_screen.dart';
@@ -48,6 +49,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Initial due-callback check after first frame (event-driven, no polling)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkDueCallbacks();
+      _checkPendingPostCallPrompt();
     });
   }
 
@@ -55,10 +57,72 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _checkPermissionsOnResume();
-      // Event-driven due-callback check on app resume (replaces 25s polling)
       _checkDueCallbacks();
-      // If the phone was left overnight and the date has changed, logout now.
       _checkDateChangeLogout();
+      _checkPendingPostCallPrompt();
+    }
+  }
+
+  bool _isCheckingPostCall = false;
+
+  Future<void> _checkPendingPostCallPrompt() async {
+    if (_isCheckingPostCall || !mounted) return;
+    _isCheckingPostCall = true;
+
+    try {
+      // 1. Check if a pending post call was stored by background phone state listener
+      Map<String, dynamic>? pending = await CallTrackingService.getPendingPostCall();
+
+      // 2. If no background pending, inspect native Android call logs for any recent connected incoming call (within last 15 min)
+      if (pending == null) {
+        final fifteenMinsAgo = DateTime.now().millisecondsSinceEpoch - (15 * 60 * 1000);
+        final recentLogs = await CallTrackingService.getRecentCallLogs(limit: 5, afterTimestamp: fifteenMinsAgo);
+        for (final log in recentLogs) {
+          final isIncoming = log['isIncoming'] == true || log['type'] == 1;
+          final duration = (log['duration'] as num?)?.toInt() ?? 0;
+          final timestamp = (log['timestamp'] as num?)?.toInt() ?? 0;
+          final number = (log['number'] ?? log['cleanNumber'] ?? '').toString();
+
+          if (isIncoming && duration > 0 && number.isNotEmpty) {
+            final key = '${number}_$timestamp';
+            final alreadyProcessed = await CallTrackingService.isCallProcessed(key);
+            if (!alreadyProcessed) {
+              await CallTrackingService.markCallProcessed(key);
+              pending = {
+                'number': number,
+                'duration': duration,
+                'direction': 'INCOMING',
+                'timestamp': timestamp,
+              };
+              break;
+            }
+          }
+        }
+      }
+
+      if (pending != null && mounted) {
+        final number = pending['number']?.toString() ?? '';
+        final duration = (pending['duration'] as num?)?.toInt() ?? 0;
+        final direction = pending['direction']?.toString() ?? 'INCOMING';
+
+        if (number.isNotEmpty) {
+          // Lookup contact info from CRM
+          final contactData = await ApiService.lookupContact(number);
+          if (mounted) {
+            await IncomingCallActionDialog.show(
+              context,
+              phoneNumber: number,
+              durationSeconds: duration,
+              direction: direction,
+              contactData: contactData,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[HomeScreen] _checkPendingPostCallPrompt error: $e');
+    } finally {
+      _isCheckingPostCall = false;
     }
   }
 
