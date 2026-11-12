@@ -40,12 +40,32 @@ class ConfigService {
     return url;
   }
 
+  /// Resolve user input (company code, domain, or full URL) into a canonical API base URL
+  static String resolveServerUrl(String input) {
+    String trimmed = input.trim();
+    if (trimmed.isEmpty) return _defaultBaseUrl;
+
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      while (trimmed.endsWith('/')) {
+        trimmed = trimmed.substring(0, trimmed.length - 1);
+      }
+      if (!trimmed.endsWith('/api/v1')) {
+        trimmed = '$trimmed/api/v1';
+      }
+      return trimmed;
+    }
+
+    if (trimmed.contains('.')) {
+      return 'https://$trimmed/api/v1';
+    }
+
+    final slug = trimmed.toLowerCase().replaceAll(RegExp(r'[^a-z0-9\-_]'), '');
+    return 'https://$slug.increditsolutions.in/api/v1';
+  }
+
   static Future<void> setBaseUrl(String url) async {
     final prefs = await SharedPreferences.getInstance();
-    String normalizedUrl = url.trim();
-    while (normalizedUrl.endsWith('/')) {
-      normalizedUrl = normalizedUrl.substring(0, normalizedUrl.length - 1);
-    }
+    String normalizedUrl = resolveServerUrl(url);
     await prefs.setString(_baseUrlKey, normalizedUrl);
     _cachedBaseUrl = normalizedUrl;
     _initialized = true;

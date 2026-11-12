@@ -34,53 +34,11 @@ class _LeadsScreenState extends State<LeadsScreen> {
   bool _hasMoreLeads = false;
   bool _isLoadingMoreLeads = false;
 
-  // Management & TL Filtering States
-  String _selectedScope = 'mine'; // 'mine', 'team', 'all'
-  int? _selectedTeamId;
-  int? _selectedOfficerId;
-  List<Map<String, dynamic>> _availableTeams = [];
-  List<Map<String, dynamic>> _availableOfficers = [];
-  bool _isLoadingTeamOfficers = false;
-
   @override
   void initState() {
     super.initState();
-    if (ConfigService.isManagementOrSupervisor) {
-      _loadTeamOfficers();
-    }
     _fetchLeads();
     _searchController.addListener(_applyFilters);
-  }
-
-  Future<void> _loadTeamOfficers() async {
-    setState(() => _isLoadingTeamOfficers = true);
-    try {
-      final res = await ApiService.getTeamOfficers();
-      final teams = (res['teams'] as List?)
-              ?.whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList() ??
-          [];
-      final officers = (res['officers'] as List?)
-              ?.whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList() ??
-          [];
-      if (mounted) {
-        setState(() {
-          _availableTeams = teams;
-          _availableOfficers = officers;
-          _isLoadingTeamOfficers = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) setState(() => _isLoadingTeamOfficers = false);
-    }
-  }
-
-  List<Map<String, dynamic>> get _filteredOfficersForDropdown {
-    if (_selectedTeamId == null) return _availableOfficers;
-    return _availableOfficers.where((o) => o['team_id'] == _selectedTeamId).toList();
   }
 
   @override
@@ -96,14 +54,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
     });
 
     try {
-      final res = await ApiService.getCreatedLeads(
-        page: 1,
-        limit: 50,
-        source: 'all',
-        scope: _selectedScope,
-        teamId: _selectedTeamId,
-        userId: _selectedOfficerId,
-      );
+      final res = await ApiService.getCreatedLeads(page: 1, limit: 50, source: 'all');
       debugPrint('[LeadsScreen] getCreatedLeads RAW RESPONSE: $res');
       final raw = res['leads'];
       final pagObj = res['pagination'];
@@ -149,9 +100,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
         page: nextPage,
         limit: 50,
         source: 'all',
-        scope: _selectedScope,
-        teamId: _selectedTeamId,
-        userId: _selectedOfficerId,
       );
       final raw = res['leads'];
       final pagObj = res['pagination'];
@@ -1131,9 +1079,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
         onRefresh: _fetchLeads,
         child: Column(
           children: [
-            // Management & TL Scope Filter Bar
-            _buildManagementFilterBar(),
-
             // Top Stage Filter Carousel
             Container(
               color: Colors.white,
@@ -1212,216 +1157,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
         foregroundColor: Colors.white,
         icon: const Icon(Icons.person_add_alt_1),
         label: const Text('Add Lead'),
-      ),
-    );
-  }
-
-  Widget _buildManagementFilterBar() {
-    if (!ConfigService.isManagementOrSupervisor) return const SizedBox.shrink();
-
-    final bool canSeeAll = ConfigService.isAdminOrManager;
-
-    return Container(
-      color: const Color(0xFFF8FAFC),
-      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Scope Pills Row
-          Row(
-            children: [
-              const Text(
-                'View:',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF475569)),
-              ),
-              if (_isLoadingTeamOfficers) ...[
-                const SizedBox(width: 6),
-                const SizedBox(
-                  width: 12,
-                  height: 12,
-                  child: CircularProgressIndicator(strokeWidth: 1.5),
-                ),
-              ],
-              const SizedBox(width: 8),
-              _buildScopePill('mine', 'My Leads', Icons.person_rounded),
-              const SizedBox(width: 6),
-              _buildScopePill('team', 'Team Leads', Icons.group_rounded),
-              if (canSeeAll) ...[
-                const SizedBox(width: 6),
-                _buildScopePill('all', 'All Leads', Icons.corporate_fare_rounded),
-              ],
-            ],
-          ),
-
-          // Sub-filters for Team & Officer when Team or All is selected
-          if (_selectedScope != 'mine') ...[
-            const SizedBox(height: 8),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  // Team Dropdown (if multiple teams available and admin/manager)
-                  if (_availableTeams.isNotEmpty && canSeeAll) ...[
-                    Container(
-                      height: 32,
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: _selectedTeamId != null ? const Color(0xFF2563EB) : const Color(0xFFCBD5E1),
-                          width: _selectedTeamId != null ? 1.5 : 1,
-                        ),
-                      ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<int?>(
-                          value: _selectedTeamId,
-                          isDense: true,
-                          hint: const Text('All Teams', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-                          icon: const Icon(Icons.arrow_drop_down, size: 18),
-                          items: [
-                            const DropdownMenuItem<int?>(
-                              value: null,
-                              child: Text('All Teams', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                            ),
-                            ..._availableTeams.map((t) => DropdownMenuItem<int?>(
-                                  value: t['id'] as int,
-                                  child: Text(t['name']?.toString() ?? 'Team', style: const TextStyle(fontSize: 12)),
-                                )),
-                          ],
-                          onChanged: (val) {
-                            setState(() {
-                              _selectedTeamId = val;
-                              if (val != null && _selectedOfficerId != null) {
-                                final officer = _availableOfficers.firstWhere(
-                                  (o) => o['id'] == _selectedOfficerId,
-                                  orElse: () => {},
-                                );
-                                if (officer['team_id'] != val) _selectedOfficerId = null;
-                              }
-                            });
-                            _fetchLeads();
-                          },
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-
-                  // Officer Dropdown
-                  if (_availableOfficers.isNotEmpty) ...[
-                    Container(
-                      height: 32,
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: _selectedOfficerId != null ? const Color(0xFF2563EB) : const Color(0xFFCBD5E1),
-                          width: _selectedOfficerId != null ? 1.5 : 1,
-                        ),
-                      ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<int?>(
-                          value: _selectedOfficerId,
-                          isDense: true,
-                          hint: const Text('All Officers', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-                          icon: const Icon(Icons.arrow_drop_down, size: 18),
-                          items: [
-                            const DropdownMenuItem<int?>(
-                              value: null,
-                              child: Text('All Officers', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                            ),
-                            ..._filteredOfficersForDropdown.map((o) => DropdownMenuItem<int?>(
-                                  value: o['id'] as int,
-                                  child: Text(o['name']?.toString() ?? 'Officer', style: const TextStyle(fontSize: 12)),
-                                )),
-                          ],
-                          onChanged: (val) {
-                            setState(() => _selectedOfficerId = val);
-                            _fetchLeads();
-                          },
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  // Reset Filter button if any filter is active
-                  if (_selectedTeamId != null || _selectedOfficerId != null) ...[
-                    const SizedBox(width: 8),
-                    InkWell(
-                      onTap: () {
-                        setState(() {
-                          _selectedTeamId = null;
-                          _selectedOfficerId = null;
-                        });
-                        _fetchLeads();
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFEE2E2),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.clear, size: 12, color: Color(0xFFDC2626)),
-                            SizedBox(width: 2),
-                            Text('Clear', style: TextStyle(fontSize: 11, color: Color(0xFFDC2626), fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildScopePill(String scope, String label, IconData icon) {
-    final isSelected = _selectedScope == scope;
-    return InkWell(
-      onTap: () {
-        if (_selectedScope == scope) return;
-        setState(() {
-          _selectedScope = scope;
-          if (scope == 'mine') {
-            _selectedTeamId = null;
-            _selectedOfficerId = null;
-          }
-        });
-        _fetchLeads();
-      },
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF2563EB) : Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isSelected ? const Color(0xFF2563EB) : const Color(0xFFCBD5E1),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 13, color: isSelected ? Colors.white : const Color(0xFF64748B)),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                color: isSelected ? Colors.white : const Color(0xFF334155),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -1754,65 +1489,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
                     ),
                   ],
                 ),
-
-                // Ownership & Officer Attribution Badge
-                Padding(
-                  padding: const EdgeInsets.only(top: 6, bottom: 2),
-                  child: Row(
-                    children: [
-                      if (lead.isOwnLead) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFEFF6FF), // Subtle Blue
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: const Color(0xFFBFDBFE)),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.person, size: 12, color: Color(0xFF2563EB)),
-                              SizedBox(width: 4),
-                              Text(
-                                'My Lead',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF1D4ED8),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ] else ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF1F5F9), // Slate Subtle
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: const Color(0xFFCBD5E1)),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.badge_outlined, size: 12, color: Color(0xFF64748B)),
-                              const SizedBox(width: 4),
-                              Text(
-                                'Officer: ${lead.assignedUser}${lead.teamName != null && lead.teamName!.isNotEmpty ? " • ${lead.teamName}" : ""}',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF334155),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
 
                 // Journey Progress Stepper
                 _buildJourneyStepper(lead),

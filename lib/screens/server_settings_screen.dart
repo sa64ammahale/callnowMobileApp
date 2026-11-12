@@ -35,17 +35,12 @@ class _ServerSettingsScreenState extends State<ServerSettingsScreen> {
     super.dispose();
   }
 
-  String _cleanUrl(String raw) {
-    String url = raw.trim();
-    while (url.endsWith('/')) {
-      url = url.substring(0, url.length - 1);
-    }
-    return url;
-  }
-
   Future<void> _testConnection() async {
     if (!_formKey.currentState!.validate()) return;
-    final candidate = _cleanUrl(_urlController.text);
+    final candidate = ConfigService.resolveServerUrl(_urlController.text);
+    if (_urlController.text.trim() != candidate) {
+      _urlController.text = candidate;
+    }
 
     setState(() {
       _isTesting = true;
@@ -89,7 +84,7 @@ class _ServerSettingsScreenState extends State<ServerSettingsScreen> {
 
   Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) return;
-    final newUrl = _cleanUrl(_urlController.text);
+    final newUrl = ConfigService.resolveServerUrl(_urlController.text);
 
     // If changing server while logged in, prompt confirmation that it logs out
     if (ConfigService.isLoggedIn && newUrl != ConfigService.baseUrl) {
@@ -314,7 +309,7 @@ class _ServerSettingsScreenState extends State<ServerSettingsScreen> {
                           ),
                           const SizedBox(height: 6),
                           const Text(
-                            'Enter the full URL prefix including scheme (https:// or http://) and api path (/api/v1).',
+                            'Enter your Company Code (e.g. zenith) or the full server URL prefix (e.g. https://zenith.increditsolutions.in/api/v1).',
                             style: TextStyle(fontSize: 12, color: Color(0xFF64748B), height: 1.4),
                           ),
                           const SizedBox(height: 14),
@@ -331,7 +326,7 @@ class _ServerSettingsScreenState extends State<ServerSettingsScreen> {
                               fontWeight: FontWeight.w500,
                             ),
                             decoration: InputDecoration(
-                              hintText: 'https://crm.yourcompany.com/api/v1',
+                              hintText: 'zenith or https://zenith.increditsolutions.in/api/v1',
                               hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
                               prefixIcon: const Icon(Icons.public_rounded, size: 20),
                               suffixIcon: Row(
@@ -367,14 +362,12 @@ class _ServerSettingsScreenState extends State<ServerSettingsScreen> {
                             ),
                             validator: (val) {
                               if (val == null || val.trim().isEmpty) {
-                                return 'Server URL cannot be empty';
+                                return 'Please enter Company Code or Server URL';
                               }
-                              final uri = Uri.tryParse(val.trim());
-                              if (uri == null || (!uri.isScheme('http') && !uri.isScheme('https'))) {
-                                return 'URL must begin with http:// or https://';
-                              }
-                              if (uri.host.isEmpty) {
-                                return 'Enter a valid server domain or IP address';
+                              final resolved = ConfigService.resolveServerUrl(val);
+                              final uri = Uri.tryParse(resolved);
+                              if (uri == null || (!uri.isScheme('http') && !uri.isScheme('https')) || uri.host.isEmpty) {
+                                return 'Enter a valid company code or server URL';
                               }
                               return null;
                             },
@@ -506,6 +499,8 @@ class _ServerSettingsScreenState extends State<ServerSettingsScreen> {
                             ],
                           ),
                           const SizedBox(height: 8),
+                          _buildExampleRow('Company Code', 'zenith (resolves to: https://zenith.increditsolutions.in/api/v1)'),
+                          const SizedBox(height: 4),
                           _buildExampleRow('Cloud Production', ConfigService.defaultBaseUrl),
                           const SizedBox(height: 4),
                           _buildExampleRow('Custom Domain', 'https://crm.yourcompany.com/api/v1'),
