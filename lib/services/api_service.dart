@@ -933,6 +933,8 @@ class ApiService {
     String contactSource = 'MAIN',
     required dynamic followupAt,
     String? note,
+    String? customerName,
+    String? phoneNumber,
   }) async {
     final DateTime scheduled = followupAt is DateTime
         ? followupAt
@@ -945,6 +947,13 @@ class ApiService {
     if (leadId != null) body['lead_id'] = leadId;
     if (cId != null) body['client_contact_id'] = cId;
     if (note != null && note.isNotEmpty) body['note'] = note;
+    if (customerName != null && customerName.trim().isNotEmpty) {
+      body['customer_name'] = customerName.trim();
+    }
+    if (phoneNumber != null && phoneNumber.trim().isNotEmpty) {
+      body['phone_number'] = phoneNumber.trim();
+      body['customer_mobile'] = phoneNumber.trim();
+    }
 
     final response = await _client.post(
       Uri.parse('$_baseUrl/telecaller/follow-ups'),

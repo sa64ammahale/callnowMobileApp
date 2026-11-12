@@ -244,6 +244,8 @@ class FollowupService extends ChangeNotifier {
           followupAt: scheduledTime.toIso8601String(),
           note: notes,
           contactSource: source ?? (clientContactId != null ? 'MAIN' : 'LEAD'),
+          customerName: customerName,
+          phoneNumber: phoneNumber,
         );
         if (res['followup_id'] != null) {
           finalServerId = int.tryParse(res['followup_id'].toString());

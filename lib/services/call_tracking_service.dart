@@ -283,7 +283,8 @@ class CallTrackingService {
           'Authorization': 'Bearer $token',
         },
         body: json.encode({
-          'record_id': number, // Using phone number as identifier
+          'phone_number': number,
+          'mobile': number,
           'source': source,
           'call_status': status,
           'call_duration': duration,
