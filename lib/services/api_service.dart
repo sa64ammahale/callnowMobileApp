@@ -580,6 +580,9 @@ class ApiService {
     String? search,
     String? status,
     String? source,
+    String? period,
+    String? dateFrom,
+    String? dateTo,
   }) async {
     final queryParams = <String, String>{
       'page': page.toString(),
@@ -588,6 +591,9 @@ class ApiService {
     if (search != null && search.isNotEmpty) queryParams['search'] = search;
     if (status != null && status.isNotEmpty && status != 'all') queryParams['status'] = status;
     if (source != null && source.isNotEmpty && source != 'all') queryParams['source'] = source;
+    if (period != null && period.isNotEmpty && period != 'all') queryParams['period'] = period;
+    if (dateFrom != null && dateFrom.isNotEmpty) queryParams['date_from'] = dateFrom;
+    if (dateTo != null && dateTo.isNotEmpty) queryParams['date_to'] = dateTo;
 
     final uri = Uri.parse('$_baseUrl/telecaller/leads').replace(queryParameters: queryParams);
     final response = await _client.get(uri, headers: _headers);
@@ -886,13 +892,25 @@ class ApiService {
     String due = 'all',
     int page = 1,
     int limit = 50,
+    String? period,
+    String? dateFrom,
+    String? dateTo,
+    String scope = 'mine',
+    int? userId,
   }) async {
-    final uri = Uri.parse('$_baseUrl/telecaller/follow-ups').replace(queryParameters: {
+    final queryParams = <String, String>{
       'status': status,
       'due': due,
       'page': page.toString(),
       'limit': limit.toString(),
-    });
+      'scope': scope,
+    };
+    if (userId != null && userId > 0) queryParams['user_id'] = userId.toString();
+    if (period != null && period.isNotEmpty && period != 'all') queryParams['period'] = period;
+    if (dateFrom != null && dateFrom.isNotEmpty) queryParams['date_from'] = dateFrom;
+    if (dateTo != null && dateTo.isNotEmpty) queryParams['date_to'] = dateTo;
+
+    final uri = Uri.parse('$_baseUrl/telecaller/follow-ups').replace(queryParameters: queryParams);
 
     final response = await _client.get(uri, headers: _headers);
 

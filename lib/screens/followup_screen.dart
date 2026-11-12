@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:callnow_new/model/followup_model.dart';
 import 'package:callnow_new/services/followup_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
+import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/widgets/callback_alert_dialog.dart';
 
 class FollowUpScreen extends StatefulWidget {
@@ -22,6 +23,11 @@ class _FollowUpScreenState extends State<FollowUpScreen>
   late TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  String _selectedScope = 'mine';
+
+  bool get _canViewAll =>
+      ['Admin', 'Super Admin', 'Manager', 'Supervisor']
+          .contains(ConfigService.userProfile.role);
 
   @override
   void initState() {
@@ -37,7 +43,7 @@ class _FollowUpScreenState extends State<FollowUpScreen>
       });
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      FollowupService.instance.syncWithServer();
+      FollowupService.instance.syncWithServer(scope: _selectedScope);
     });
   }
 
@@ -49,16 +55,25 @@ class _FollowUpScreenState extends State<FollowUpScreen>
   }
 
   List<FollowupModel> _applySearch(List<FollowupModel> list) {
-    if (_searchQuery.isEmpty) return list;
-    return list.where((f) {
+    final currentUserId = ConfigService.userProfile.id;
+    var filtered = list;
+    if (_selectedScope == 'mine' && currentUserId > 0) {
+      filtered = filtered
+          .where((f) => f.userId == null || f.userId == currentUserId)
+          .toList();
+    }
+    if (_searchQuery.isEmpty) return filtered;
+    return filtered.where((f) {
       final name = f.customerName.toLowerCase();
       final phone = f.phoneNumber.toLowerCase();
       final company = (f.company ?? '').toLowerCase();
       final notes = f.notes.toLowerCase();
+      final officer = (f.officerName ?? '').toLowerCase();
       return name.contains(_searchQuery) ||
           phone.contains(_searchQuery) ||
           company.contains(_searchQuery) ||
-          notes.contains(_searchQuery);
+          notes.contains(_searchQuery) ||
+          officer.contains(_searchQuery);
     }).toList();
   }
 
@@ -382,7 +397,7 @@ class _FollowUpScreenState extends State<FollowUpScreen>
                       behavior: SnackBarBehavior.floating,
                     ),
                   );
-                  await FollowupService.instance.syncWithServer();
+                  await FollowupService.instance.syncWithServer(scope: _selectedScope);
                 },
               ),
               IconButton(
@@ -392,7 +407,7 @@ class _FollowUpScreenState extends State<FollowUpScreen>
               ),
             ],
             bottom: PreferredSize(
-              preferredSize: const Size.fromHeight(100),
+              preferredSize: Size.fromHeight(_canViewAll ? 142 : 100),
               child: Column(
                 children: [
                   // Search Bar
@@ -423,6 +438,49 @@ class _FollowUpScreenState extends State<FollowUpScreen>
                       ),
                     ),
                   ),
+
+                  // Scope Filter (Visible for Admins / Managers / Supervisors)
+                  if (_canViewAll)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                      child: Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('My Follow-ups', style: TextStyle(fontSize: 11)),
+                            selected: _selectedScope == 'mine',
+                            selectedColor: const Color(0xFFDBEAFE),
+                            labelStyle: TextStyle(
+                              color: _selectedScope == 'mine' ? const Color(0xFF1D4ED8) : const Color(0xFF475569),
+                              fontWeight: _selectedScope == 'mine' ? FontWeight.bold : FontWeight.normal,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            onSelected: (sel) {
+                              if (sel) {
+                                setState(() => _selectedScope = 'mine');
+                                FollowupService.instance.syncWithServer(scope: 'mine');
+                              }
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          ChoiceChip(
+                            label: const Text('All Team Follow-ups', style: TextStyle(fontSize: 11)),
+                            selected: _selectedScope == 'all',
+                            selectedColor: const Color(0xFFDBEAFE),
+                            labelStyle: TextStyle(
+                              color: _selectedScope == 'all' ? const Color(0xFF1D4ED8) : const Color(0xFF475569),
+                              fontWeight: _selectedScope == 'all' ? FontWeight.bold : FontWeight.normal,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            onSelected: (sel) {
+                              if (sel) {
+                                setState(() => _selectedScope = 'all');
+                                FollowupService.instance.syncWithServer(scope: 'all');
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
 
                   // Tab Bar
                   TabBar(
@@ -560,7 +618,7 @@ class _FollowUpScreenState extends State<FollowUpScreen>
   Widget _buildFollowupList(List<FollowupModel> list, {required String emptyMsg}) {
     if (list.isEmpty) {
       return RefreshIndicator(
-        onRefresh: () => FollowupService.instance.syncWithServer(),
+        onRefresh: () => FollowupService.instance.syncWithServer(scope: _selectedScope),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           children: [
@@ -590,7 +648,7 @@ class _FollowUpScreenState extends State<FollowUpScreen>
     }
 
     return RefreshIndicator(
-      onRefresh: () => FollowupService.instance.syncWithServer(),
+      onRefresh: () => FollowupService.instance.syncWithServer(scope: _selectedScope),
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(14, 6, 14, 80),
@@ -641,39 +699,68 @@ class _FollowUpScreenState extends State<FollowUpScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Entity Badge: Client Contact vs Converted Lead
-            if (item.leadId != null || item.clientContactId != null) ...[
-              Row(
+            // Entity & Officer Badges
+            if (item.leadId != null ||
+                item.clientContactId != null ||
+                (item.officerName != null && item.officerName!.isNotEmpty)) ...[
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: item.leadId != null ? const Color(0xFFDCFCE7) : const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
-                        color: item.leadId != null ? const Color(0xFF86EFAC) : const Color(0xFFCBD5E1),
+                  if (item.leadId != null || item.clientContactId != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: item.leadId != null ? const Color(0xFFDCFCE7) : const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: item.leadId != null ? const Color(0xFF86EFAC) : const Color(0xFFCBD5E1),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            item.leadId != null ? Icons.verified_user_rounded : Icons.contact_phone_outlined,
+                            size: 11,
+                            color: item.leadId != null ? const Color(0xFF16A34A) : const Color(0xFF475569),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            item.leadId != null ? 'Lead #${item.leadId}' : 'Contact #${item.clientContactId}',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: item.leadId != null ? const Color(0xFF15803D) : const Color(0xFF334155),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          item.leadId != null ? Icons.verified_user_rounded : Icons.contact_phone_outlined,
-                          size: 11,
-                          color: item.leadId != null ? const Color(0xFF16A34A) : const Color(0xFF475569),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          item.leadId != null ? 'Lead #${item.leadId}' : 'Contact #${item.clientContactId}',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color: item.leadId != null ? const Color(0xFF15803D) : const Color(0xFF334155),
+                  if (item.officerName != null && item.officerName!.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEFF6FF),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: const Color(0xFFBFDBFE)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.person, size: 11, color: Color(0xFF2563EB)),
+                          const SizedBox(width: 4),
+                          Text(
+                            item.officerName!,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF1D4ED8),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
                 ],
               ),
               const SizedBox(height: 6),

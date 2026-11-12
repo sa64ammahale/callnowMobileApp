@@ -28,6 +28,11 @@ class _LeadsScreenState extends State<LeadsScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   String _activeStageFilter = 'ALL'; // 'ALL' or stageKey ('LEAD', 'LOGIN', etc.)
+  int _currentPage = 1;
+  int _totalLeadsCount = 0;
+  int _totalPages = 1;
+  bool _hasMoreLeads = false;
+  bool _isLoadingMoreLeads = false;
 
   @override
   void initState() {
@@ -49,25 +54,28 @@ class _LeadsScreenState extends State<LeadsScreen> {
     });
 
     try {
-      final res = await ApiService.getCreatedLeads(limit: 100, source: 'all');
+      final res = await ApiService.getCreatedLeads(page: 1, limit: 50, source: 'all');
       debugPrint('[LeadsScreen] getCreatedLeads RAW RESPONSE: $res');
       final raw = res['leads'];
+      final pagObj = res['pagination'];
+      final total = (pagObj is Map ? pagObj['total'] : null) ?? (raw is List ? raw.length : 0);
+      final totalPages = (pagObj is Map ? pagObj['total_pages'] : null) ?? 1;
+
       List<CrmLead> list = [];
       if (raw is List) {
         list = raw
             .whereType<Map>()
             .map((e) => CrmLead.fromJson(Map<String, dynamic>.from(e)))
             .toList();
-        for (final l in list) {
-          debugPrint(
-            '[LeadsScreen] Parsed lead: id=${l.id}, status=${l.status}, stage=${l.stage}, source=${l.source}',
-          );
-        }
       }
 
       if (mounted) {
         setState(() {
           _allLeads = list;
+          _currentPage = 1;
+          _totalLeadsCount = (total as num).toInt();
+          _totalPages = (totalPages as num).toInt();
+          _hasMoreLeads = _currentPage < _totalPages;
           _isLoading = false;
         });
         _applyFilters();
@@ -78,6 +86,51 @@ class _LeadsScreenState extends State<LeadsScreen> {
           _isLoading = false;
           _errorMessage = e.toString().replaceAll('Exception: ', '');
         });
+      }
+    }
+  }
+
+  Future<void> _loadMoreLeads() async {
+    if (_isLoadingMoreLeads || !_hasMoreLeads) return;
+    setState(() => _isLoadingMoreLeads = true);
+
+    try {
+      final nextPage = _currentPage + 1;
+      final res = await ApiService.getCreatedLeads(
+        page: nextPage,
+        limit: 50,
+        source: 'all',
+      );
+      final raw = res['leads'];
+      final pagObj = res['pagination'];
+      final total = (pagObj is Map ? pagObj['total'] : null) ?? _totalLeadsCount;
+      final totalPages = (pagObj is Map ? pagObj['total_pages'] : null) ?? _totalPages;
+
+      List<CrmLead> list = [];
+      if (raw is List) {
+        list = raw
+            .whereType<Map>()
+            .map((e) => CrmLead.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+      }
+
+      if (mounted) {
+        setState(() {
+          _allLeads.addAll(list);
+          _currentPage = nextPage;
+          _totalLeadsCount = (total as num).toInt();
+          _totalPages = (totalPages as num).toInt();
+          _hasMoreLeads = _currentPage < _totalPages;
+          _isLoadingMoreLeads = false;
+        });
+        _applyFilters();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingMoreLeads = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load more leads: $e')),
+        );
       }
     }
   }
@@ -564,10 +617,12 @@ class _LeadsScreenState extends State<LeadsScreen> {
     final salaryCtrl = TextEditingController();
     final cityCtrl = TextEditingController();
     final remarksCtrl = TextEditingController();
+    final customBankCtrl = TextEditingController();
 
     String selectedLoanType = LeadStageHelper.loanTypes.first;
     String selectedStage = 'LEAD';
     String selectedBank = LeadStageHelper.partnerBanks.first;
+    bool isCustomBank = false;
     String selectedPriority = 'Medium';
     String selectedTemp = 'Warm';
     bool isSubmitting = false;
@@ -747,15 +802,31 @@ class _LeadsScreenState extends State<LeadsScreen> {
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               initialValue: selectedStage,
+                              isExpanded: true,
                               decoration: const InputDecoration(
                                 labelText: 'Initial Stage',
                                 border: OutlineInputBorder(),
                                 isDense: true,
                               ),
+                              selectedItemBuilder: (context) {
+                                return LeadStageHelper.stageKeys.map((k) {
+                                  return Text(
+                                    LeadStageHelper.getLabel(k),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13),
+                                  );
+                                }).toList();
+                              },
                               items: LeadStageHelper.stageKeys.map((k) {
                                 return DropdownMenuItem(
                                   value: k,
-                                  child: Text(LeadStageHelper.getLabel(k)),
+                                  child: Text(
+                                    LeadStageHelper.getLabel(k),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
                                 );
                               }).toList(),
                               onChanged: (val) {
@@ -767,37 +838,98 @@ class _LeadsScreenState extends State<LeadsScreen> {
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               initialValue: selectedBank,
+                              isExpanded: true,
                               decoration: const InputDecoration(
                                 labelText: 'Target Bank',
                                 border: OutlineInputBorder(),
                                 isDense: true,
                               ),
-                              items: LeadStageHelper.partnerBanks.map((b) {
-                                return DropdownMenuItem(
-                                  value: b,
-                                  child: Text(b, overflow: TextOverflow.ellipsis),
-                                );
-                              }).toList(),
+                              selectedItemBuilder: (context) {
+                                final bankList = [...LeadStageHelper.partnerBanks, LeadStageHelper.otherBankOption];
+                                return bankList.map((b) {
+                                  return Text(
+                                    b,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13),
+                                  );
+                                }).toList();
+                              },
+                              items: [
+                                ...LeadStageHelper.partnerBanks.map((b) {
+                                  return DropdownMenuItem(
+                                    value: b,
+                                    child: Text(
+                                      b,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
+                                  );
+                                }),
+                                const DropdownMenuItem(
+                                  value: LeadStageHelper.otherBankOption,
+                                  child: Text(
+                                    LeadStageHelper.otherBankOption,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF2563EB),
+                                    ),
+                                  ),
+                                ),
+                              ],
                               onChanged: (val) {
-                                if (val != null) setModalState(() => selectedBank = val);
+                                if (val != null) {
+                                  setModalState(() {
+                                    selectedBank = val;
+                                    isCustomBank = (val == LeadStageHelper.otherBankOption);
+                                  });
+                                }
                               },
                             ),
                           ),
                         ],
                       ),
+                      if (isCustomBank) ...[
+                        const SizedBox(height: 10),
+                        TextFormField(
+                          controller: customBankCtrl,
+                          autofocus: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Enter Target Bank Name *',
+                            prefixIcon: Icon(Icons.account_balance_outlined),
+                            hintText: 'e.g. Standard Chartered, RBL Bank, etc.',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          validator: (v) {
+                            if (isCustomBank && (v == null || v.trim().isEmpty)) {
+                              return 'Bank name is required';
+                            }
+                            return null;
+                          },
+                        ),
+                      ],
                       const SizedBox(height: 10),
                       Row(
                         children: [
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               initialValue: selectedPriority,
+                              isExpanded: true,
                               decoration: const InputDecoration(
                                 labelText: 'Priority',
                                 border: OutlineInputBorder(),
                                 isDense: true,
                               ),
                               items: LeadStageHelper.priorities.map((p) {
-                                return DropdownMenuItem(value: p, child: Text(p));
+                                return DropdownMenuItem(
+                                  value: p,
+                                  child: Text(p, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                );
                               }).toList(),
                               onChanged: (val) {
                                 if (val != null) setModalState(() => selectedPriority = val);
@@ -808,13 +940,17 @@ class _LeadsScreenState extends State<LeadsScreen> {
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               initialValue: selectedTemp,
+                              isExpanded: true,
                               decoration: const InputDecoration(
                                 labelText: 'Temperature',
                                 border: OutlineInputBorder(),
                                 isDense: true,
                               ),
                               items: LeadStageHelper.temperatures.map((t) {
-                                return DropdownMenuItem(value: t, child: Text(t));
+                                return DropdownMenuItem(
+                                  value: t,
+                                  child: Text(t, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                );
                               }).toList(),
                               onChanged: (val) {
                                 if (val != null) setModalState(() => selectedTemp = val);
@@ -852,6 +988,10 @@ class _LeadsScreenState extends State<LeadsScreen> {
                                 setModalState(() => isSubmitting = true);
 
                                 try {
+                                  final effectiveBank = isCustomBank
+                                      ? customBankCtrl.text.trim()
+                                      : (selectedBank == LeadStageHelper.otherBankOption ? '' : selectedBank);
+
                                   await ApiService.createLead(
                                     name: nameCtrl.text.trim(),
                                     mobile: mobileCtrl.text.trim(),
@@ -862,7 +1002,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
                                     loanType: selectedLoanType,
                                     stage: selectedTemp,
                                     priority: selectedPriority,
-                                    loginBank: selectedBank,
+                                    loginBank: effectiveBank,
                                     source: 'MAIN',
                                   );
 
@@ -1140,10 +1280,37 @@ class _LeadsScreenState extends State<LeadsScreen> {
       );
     }
 
+    final showLoadMore = _hasMoreLeads && _activeStageFilter == 'ALL' && _searchController.text.isEmpty;
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(14, 6, 14, 80),
-      itemCount: _filteredLeads.length,
+      itemCount: _filteredLeads.length + (showLoadMore ? 1 : 0),
       itemBuilder: (context, index) {
+        if (index == _filteredLeads.length) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12.0),
+            child: Center(
+              child: OutlinedButton.icon(
+                onPressed: _isLoadingMoreLeads ? null : _loadMoreLeads,
+                icon: _isLoadingMoreLeads
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.arrow_downward, size: 18),
+                label: Text(
+                  _isLoadingMoreLeads
+                      ? 'Loading more leads...'
+                      : 'Load More Leads (${_totalLeadsCount - _allLeads.length} remaining)',
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+          );
+        }
         final lead = _filteredLeads[index];
         return _buildLeadCard(lead);
       },

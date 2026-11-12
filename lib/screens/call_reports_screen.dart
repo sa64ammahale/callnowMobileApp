@@ -35,6 +35,11 @@ class CallReportsScreenState extends State<CallReportsScreen>
 
   Map<String, dynamic>? _summaryData;
   List<Map<String, dynamic>> _callLogs = [];
+  int _currentPage = 1;
+  int _totalCallsCount = 0;
+  int _totalPages = 1;
+  bool _hasMore = false;
+  bool _isLoadingMore = false;
 
   final List<Map<String, String>> _periodOptions = [
     {'id': 'today', 'label': 'Today'},
@@ -134,10 +139,18 @@ class CallReportsScreenState extends State<CallReportsScreen>
               .toList()
           : [];
 
+      final pagObj = historyResponse['pagination'];
+      final total = (pagObj is Map ? pagObj['total'] : null) ?? parsedCalls.length;
+      final totalPages = (pagObj is Map ? pagObj['total_pages'] : null) ?? 1;
+
       if (mounted) {
         setState(() {
           _summaryData = summary;
           _callLogs = parsedCalls;
+          _currentPage = 1;
+          _totalCallsCount = (total as num).toInt();
+          _totalPages = (totalPages as num).toInt();
+          _hasMore = _currentPage < _totalPages;
           _isLoading = false;
         });
       }
@@ -147,6 +160,62 @@ class CallReportsScreenState extends State<CallReportsScreen>
           _isLoading = false;
           _errorMessage = e.toString().replaceAll('Exception: ', '');
         });
+      }
+    }
+  }
+
+  Future<void> _loadMoreCalls() async {
+    if (_isLoadingMore || !_hasMore) return;
+    setState(() => _isLoadingMore = true);
+
+    try {
+      String? dateFrom;
+      String? dateTo;
+      if (_selectedPeriod == 'custom' && _customDateRange != null) {
+        dateFrom = _customDateRange!.start.toIso8601String().substring(0, 10);
+        dateTo = _customDateRange!.end.toIso8601String().substring(0, 10);
+      }
+
+      final nextPage = _currentPage + 1;
+      final historyResponse = await ApiService.getCallHistory(
+        period: _selectedPeriod,
+        timingTier: _selectedTimingTier != 'all' ? _selectedTimingTier : null,
+        status: _selectedStatus != 'all' ? _selectedStatus : null,
+        dateFrom: dateFrom,
+        dateTo: dateTo,
+        search: _searchController.text.trim().isNotEmpty ? _searchController.text.trim() : null,
+        page: nextPage,
+        limit: 50,
+      );
+
+      final rawCalls = historyResponse['data'] ?? historyResponse['calls'];
+      final List<Map<String, dynamic>> parsedCalls = (rawCalls is List)
+          ? rawCalls
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : [];
+
+      final pagObj = historyResponse['pagination'];
+      final total = (pagObj is Map ? pagObj['total'] : null) ?? (_totalCallsCount + parsedCalls.length);
+      final totalPages = (pagObj is Map ? pagObj['total_pages'] : null) ?? _totalPages;
+
+      if (mounted) {
+        setState(() {
+          _callLogs.addAll(parsedCalls);
+          _currentPage = nextPage;
+          _totalCallsCount = (total as num).toInt();
+          _totalPages = (totalPages as num).toInt();
+          _hasMore = _currentPage < _totalPages;
+          _isLoadingMore = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingMore = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load more calls: $e')),
+        );
       }
     }
   }
@@ -462,7 +531,9 @@ class CallReportsScreenState extends State<CallReportsScreen>
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Dialed Records (${_callLogs.length})',
+                  _totalCallsCount > _callLogs.length
+                      ? 'Dialed Records (${_callLogs.length} of $_totalCallsCount)'
+                      : 'Dialed Records (${_callLogs.length})',
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
                 ),
                 Text(
@@ -483,7 +554,7 @@ class CallReportsScreenState extends State<CallReportsScreen>
               _buildErrorCard()
             else if (_callLogs.isEmpty)
               _buildEmptyCallLogsCard()
-            else
+            else ...[
               ListView.separated(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -493,6 +564,39 @@ class CallReportsScreenState extends State<CallReportsScreen>
                   return _buildCallLogItem(context, _callLogs[index]);
                 },
               ),
+              if (_hasMore) ...[
+                const SizedBox(height: 16),
+                Center(
+                  child: OutlinedButton.icon(
+                    onPressed: _isLoadingMore ? null : _loadMoreCalls,
+                    icon: _isLoadingMore
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.arrow_downward, size: 18),
+                    label: Text(
+                      _isLoadingMore
+                          ? 'Loading more calls...'
+                          : 'Load More Calls (${_totalCallsCount - _callLogs.length} remaining)',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ),
+              ] else if (_callLogs.isNotEmpty && !_isLoading) ...[
+                const SizedBox(height: 16),
+                Center(
+                  child: Text(
+                    'All ${_callLogs.length} records loaded',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+              ],
+            ],
             const SizedBox(height: 30),
           ],
         ),

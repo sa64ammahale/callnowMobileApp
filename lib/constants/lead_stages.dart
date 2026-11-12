@@ -109,6 +109,8 @@ class LeadStageHelper {
     'Tata Capital',
   ];
 
+  static const String otherBankOption = '+ Other / Custom Bank';
+
   static const List<String> temperatures = [
     'Hot',
     'Warm',

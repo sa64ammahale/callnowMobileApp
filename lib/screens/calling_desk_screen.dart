@@ -934,6 +934,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               initialValue: selectedLoanType,
+                              isExpanded: true,
                               decoration: InputDecoration(
                                 labelText: 'Loan Type *',
                                 prefixIcon: const Icon(Icons.category_outlined, size: 20),

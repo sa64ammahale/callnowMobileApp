@@ -12,6 +12,8 @@ class FollowupModel {
   final String status; // 'pending', 'snoozed', 'completed', 'cancelled'
   final DateTime? completedAt;
   final String? source;
+  final int? userId;
+  final String? officerName;
 
   FollowupModel({
     required this.id,
@@ -27,6 +29,8 @@ class FollowupModel {
     this.status = 'pending',
     this.completedAt,
     this.source,
+    this.userId,
+    this.officerName,
   });
 
   bool get isOverdue =>
@@ -86,6 +90,8 @@ class FollowupModel {
       'status': status,
       'completed_at': completedAt?.toIso8601String(),
       'source': source,
+      'user_id': userId,
+      'officer_name': officerName,
     };
   }
 
@@ -135,6 +141,10 @@ class FollowupModel {
       status: normalizedStatus,
       completedAt: parseDate(json['completed_at']),
       source: json['source']?.toString() ?? json['contact_source']?.toString(),
+      userId: json['user_id'] is int
+          ? json['user_id'] as int
+          : int.tryParse(json['user_id']?.toString() ?? ''),
+      officerName: json['officer_name']?.toString(),
     );
   }
 
@@ -152,6 +162,8 @@ class FollowupModel {
     String? status,
     DateTime? completedAt,
     String? source,
+    int? userId,
+    String? officerName,
   }) {
     return FollowupModel(
       id: id ?? this.id,
@@ -167,6 +179,8 @@ class FollowupModel {
       status: status ?? this.status,
       completedAt: completedAt ?? this.completedAt,
       source: source ?? this.source,
+      userId: userId ?? this.userId,
+      officerName: officerName ?? this.officerName,
     );
   }
 }

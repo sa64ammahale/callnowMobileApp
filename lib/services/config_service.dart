@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/model/user_profile.dart';
 import 'package:callnow_new/services/secure_storage_service.dart';
+import 'package:callnow_new/services/followup_service.dart';
 
 class ConfigService {
   static const String _baseUrlKey = 'base_url';
@@ -254,6 +255,7 @@ class ConfigService {
     await prefs.remove(_userDataKey);
     _cachedToken = null;
     _cachedUserData = null;
+    FollowupService.instance.clearLocalCache();
   }
 
   static String get defaultBaseUrl => _defaultBaseUrl;

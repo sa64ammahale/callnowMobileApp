@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/model/followup_model.dart';
 import 'package:callnow_new/services/api_service.dart';
+import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/notification_service.dart';
 
 class FollowupService extends ChangeNotifier {
@@ -10,7 +11,10 @@ class FollowupService extends ChangeNotifier {
   static FollowupService get instance => _instance;
   FollowupService._internal();
 
-  static const String _storageKey = 'callnow_saved_followups_v1';
+  static String get _storageKey {
+    final uid = ConfigService.userProfile.id;
+    return uid > 0 ? 'callnow_saved_followups_uid_$uid' : 'callnow_saved_followups_v1';
+  }
 
   final List<FollowupModel> _followups = [];
   final Set<String> _promptedIdsInSession = {};
@@ -87,6 +91,18 @@ class FollowupService extends ChangeNotifier {
     await _instance._loadFromPrefs();
   }
 
+  void clearLocalCache() {
+    _followups.clear();
+    _promptedIdsInSession.clear();
+    _cacheDirty = true;
+    _rebuildCaches();
+    notifyListeners();
+  }
+
+  Future<void> reloadForCurrentUser() async {
+    await _loadFromPrefs();
+  }
+
   Future<void> _loadFromPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -120,45 +136,87 @@ class FollowupService extends ChangeNotifier {
   }
 
   /// Sync open follow-ups from CRM backend
-  Future<void> syncWithServer() async {
+  Future<void> syncWithServer({String scope = 'mine'}) async {
     try {
-      final res = await ApiService.fetchServerFollowups(status: 'OPEN', limit: 100);
-      final dynamic rawList = res['data'];
-      if (rawList is List) {
-        for (final item in rawList) {
-          if (item is Map<String, dynamic>) {
-            final serverModel = FollowupModel.fromJson(item);
-            final index = _followups.indexWhere((f) =>
-                (serverModel.serverId != null && f.serverId == serverModel.serverId) ||
-                (serverModel.clientContactId != null &&
-                    f.clientContactId == serverModel.clientContactId &&
-                    f.status == 'pending'));
-            if (index >= 0) {
-              _followups[index] = _followups[index].copyWith(
-                serverId: serverModel.serverId,
-                customerName: serverModel.customerName,
-                phoneNumber: serverModel.phoneNumber,
-                company: serverModel.company,
-                scheduledTime: serverModel.scheduledTime,
-                notes: serverModel.notes.isNotEmpty ? serverModel.notes : _followups[index].notes,
-                status: serverModel.status,
-                leadId: serverModel.leadId ?? _followups[index].leadId,
-                clientContactId: serverModel.clientContactId ?? _followups[index].clientContactId,
-                source: serverModel.source ?? _followups[index].source,
-              );
-            } else {
-              _followups.add(serverModel);
-              if (serverModel.scheduledTime.isAfter(DateTime.now())) {
-                await NotificationService.scheduleFollowupNotification(serverModel);
+      final currentUserId = ConfigService.userProfile.id;
+      int page = 1;
+      bool hasMore = true;
+      final Set<int> seenServerIds = {};
+
+      while (hasMore && page <= 10) {
+        final res = await ApiService.fetchServerFollowups(
+          status: 'OPEN',
+          page: page,
+          limit: 100,
+          scope: scope,
+          userId: scope == 'mine' && currentUserId > 0 ? currentUserId : null,
+        );
+        final dynamic rawList = res['data'];
+        if (rawList is List && rawList.isNotEmpty) {
+          for (final item in rawList) {
+            if (item is Map<String, dynamic>) {
+              final serverModel = FollowupModel.fromJson(item);
+              if (serverModel.serverId != null) {
+                seenServerIds.add(serverModel.serverId!);
+              }
+
+              // Extra client safety check: if scope is mine, skip if explicitly assigned to someone else
+              if (scope == 'mine' &&
+                  currentUserId > 0 &&
+                  serverModel.userId != null &&
+                  serverModel.userId != currentUserId) {
+                continue;
+              }
+
+              final index = _followups.indexWhere((f) =>
+                  (serverModel.serverId != null && f.serverId == serverModel.serverId) ||
+                  (serverModel.clientContactId != null &&
+                      f.clientContactId == serverModel.clientContactId &&
+                      f.status == 'pending'));
+              if (index >= 0) {
+                _followups[index] = _followups[index].copyWith(
+                  serverId: serverModel.serverId,
+                  customerName: serverModel.customerName,
+                  phoneNumber: serverModel.phoneNumber,
+                  company: serverModel.company,
+                  scheduledTime: serverModel.scheduledTime,
+                  notes: serverModel.notes.isNotEmpty ? serverModel.notes : _followups[index].notes,
+                  status: serverModel.status,
+                  leadId: serverModel.leadId ?? _followups[index].leadId,
+                  clientContactId: serverModel.clientContactId ?? _followups[index].clientContactId,
+                  source: serverModel.source ?? _followups[index].source,
+                  userId: serverModel.userId ?? _followups[index].userId,
+                  officerName: serverModel.officerName ?? _followups[index].officerName,
+                );
+              } else {
+                _followups.add(serverModel);
+                if (serverModel.scheduledTime.isAfter(DateTime.now())) {
+                  await NotificationService.scheduleFollowupNotification(serverModel);
+                }
               }
             }
           }
+          final hasMoreFlag = res['has_more'] == true;
+          final totalPages = (res['total_pages'] as num?)?.toInt() ?? 1;
+          hasMore = hasMoreFlag || page < totalPages;
+          page++;
+        } else {
+          hasMore = false;
         }
-        _cacheDirty = true;
-        _rebuildCaches();
-        await _saveToPrefs();
-        notifyListeners();
       }
+
+      // If scope is 'mine', remove any stale server followups not in active list
+      if (scope == 'mine' && currentUserId > 0) {
+        _followups.removeWhere((f) =>
+            f.serverId != null &&
+            ((f.userId != null && f.userId != currentUserId) ||
+             (f.status == 'pending' && !seenServerIds.contains(f.serverId))));
+      }
+
+      _cacheDirty = true;
+      _rebuildCaches();
+      await _saveToPrefs();
+      notifyListeners();
     } catch (e) {
       debugPrint('Error syncing followups with server: $e');
     }
