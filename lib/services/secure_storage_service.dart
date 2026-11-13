@@ -18,7 +18,7 @@ class SecureStorageService {
   static SecureStorageBackend _backend = _FlutterSecureStorageBackend(
     const FlutterSecureStorage(
       aOptions: AndroidOptions(
-        encryptedSharedPreferences: true,
+        resetOnError: true,
       ),
       iOptions: IOSOptions(
         accountName: 'callnow_new',
@@ -36,7 +36,7 @@ class SecureStorageService {
     _backend = _FlutterSecureStorageBackend(
       const FlutterSecureStorage(
         aOptions: AndroidOptions(
-          encryptedSharedPreferences: true,
+          resetOnError: true,
         ),
         iOptions: IOSOptions(
           accountName: 'callnow_new',

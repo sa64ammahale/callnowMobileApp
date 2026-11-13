@@ -47,7 +47,7 @@ class NotificationService {
         if (tz.timeZoneDatabase.locations.containsKey(localName)) {
           tz.setLocalLocation(tz.getLocation(localName));
         } else {
-          final offset = DateTime.now().timeZoneOffset.inMilliseconds;
+          final offset = DateTime.now().timeZoneOffset;
           for (final location in tz.timeZoneDatabase.locations.values) {
             if (location.currentTimeZone.offset == offset) {
               tz.setLocalLocation(location);
@@ -66,7 +66,7 @@ class NotificationService {
       );
 
       await _flutterLocalNotificationsPlugin.initialize(
-        initializationSettings,
+        settings: initializationSettings,
         onDidReceiveNotificationResponse:
             (NotificationResponse notificationResponse) {
           final payload = notificationResponse.payload;
@@ -165,14 +165,12 @@ class NotificationService {
       };
 
       await _flutterLocalNotificationsPlugin.zonedSchedule(
-        id,
-        '📞 Callback: ${followup.customerName}',
-        '${followup.phoneNumber} • ${followup.notes.isNotEmpty ? followup.notes : "Call scheduled for this time"}',
-        scheduledDate,
-        notificationDetails,
+        id: id,
+        title: '📞 Callback: ${followup.customerName}',
+        body: '${followup.phoneNumber} • ${followup.notes.isNotEmpty ? followup.notes : "Call scheduled for this time"}',
+        scheduledDate: scheduledDate,
+        notificationDetails: notificationDetails,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
         payload: jsonEncode(payloadMap),
       );
     } catch (e) {
@@ -183,7 +181,7 @@ class NotificationService {
   static Future<void> cancelFollowupNotification(String followupId) async {
     try {
       final id = _getNotificationId(followupId);
-      await _flutterLocalNotificationsPlugin.cancel(id);
+      await _flutterLocalNotificationsPlugin.cancel(id: id);
     } catch (e) {
       debugPrint('Error cancelling notification: $e');
     }
@@ -212,10 +210,10 @@ class NotificationService {
 
       final id = DateTime.now().millisecondsSinceEpoch.remainder(100000);
       await _flutterLocalNotificationsPlugin.show(
-        id,
-        title,
-        body,
-        notificationDetails,
+        id: id,
+        title: title,
+        body: body,
+        notificationDetails: notificationDetails,
         payload: payload,
       );
     } catch (e) {
