@@ -37,14 +37,7 @@ lib/
 assets/
   iclauncher.png            # App launcher icon
   images/
-    call_history.png        # Call history icon
-    dark_logo.jpg           # Dark mode logo
-    enquiries.png           # Enquiries icon
-    male_user.png           # User avatar
-    ringing_phone.png       # Ringing phone icon
-    search.png              # Search icon
-    settings.png            # Settings icon
-    sys_update.png          # System update icon
+    whatsapp.png            # WhatsApp integration icon
 android/                    # Android platform code
 ios/                        # iOS platform code
 web/                        # Web platform code
