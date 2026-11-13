@@ -55,6 +55,38 @@ test/
   widget_test.dart          # Widget tests
 ```
 
+## Multi-Tenant Authentication & Dynamic Routing
+
+CallNow 5.0 supports multi-tenant database routing via company codes:
+
+### 1. Login with Company Code
+The login screen accepts a **Company Code** (e.g. `incredit` or `acme`), which is sent in the login payload:
+```http
+POST /api/v1/auth/login
+Content-Type: application/json
+X-Company-Code: incredit
+
+{
+  "company_code": "incredit",
+  "email": "telecaller@company.com",
+  "password": "Password123"
+}
+```
+
+### 2. Encrypted Local Storage
+- Backed by platform secure storage: **Android Keystore (EncryptedSharedPreferences)** and **iOS Keychain**.
+- The `company_code` is remembered locally so users do not need to re-type it upon subsequent logins.
+
+### 3. Automatic Request Routing (`X-Company-Code`)
+All subsequent authenticated requests made via `ApiService` automatically attach the header:
+```http
+Authorization: Bearer <token>
+X-Company-Code: <stored_company_code>
+```
+The server routes requests directly to that company's isolated database.
+
+---
+
 ## API Endpoints
 
 Backend API base URL: `https://starsinfotech.in/callnow/FLUTTER_API.php?apicall=`
