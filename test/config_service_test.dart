@@ -51,6 +51,30 @@ void main() {
       expect(ConfigService.isLoggedIn, isFalse);
       expect(ConfigService.userData, isNull);
     });
+
+    test('companyCode stores, caches, and persists correctly across logins', () async {
+      await ConfigService.setCompanyCode('acme');
+      expect(ConfigService.companyCode, 'acme');
+
+      final user = {
+        'id': 11,
+        'name': 'Agent 01',
+        'email': 'agent@acme.com',
+        'company_code': 'acme',
+      };
+      await ConfigService.saveAuthData('token-xyz', user, companyCode: 'acme');
+      expect(ConfigService.companyCode, 'acme');
+      expect(ConfigService.userProfile.companyCode, 'acme');
+
+      // Logout preserves company code by default for fast re-login
+      await ConfigService.clearAuthData();
+      expect(ConfigService.companyCode, 'acme');
+      expect(ConfigService.isLoggedIn, isFalse);
+
+      // Explicit clear removes it
+      await ConfigService.clearAuthData(clearCompanyCode: true);
+      expect(ConfigService.companyCode, isNull);
+    });
   });
 }
 

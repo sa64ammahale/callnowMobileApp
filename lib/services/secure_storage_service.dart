@@ -8,6 +8,7 @@ class SecureStorageService {
   SecureStorageService._internal();
 
   static const _tokenKey = 'callnow_auth_token';
+  static const _companyCodeKey = 'callnow_company_code';
   static const _userEmailKey = 'callnow_user_email';
   static const _userPhoneKey = 'callnow_user_phone';
   static const _userNameKey = 'callnow_user_name';
@@ -95,6 +96,10 @@ class SecureStorageService {
   Future<void> writeUserId(String id) => writeUserField(_userIdKey, id);
   Future<String?> readUserId() => readUserField(_userIdKey);
   Future<void> deleteUserId() => deleteUserField(_userIdKey);
+
+  Future<void> writeCompanyCode(String code) => writeUserField(_companyCodeKey, code);
+  Future<String?> readCompanyCode() => readUserField(_companyCodeKey);
+  Future<void> deleteCompanyCode() => deleteUserField(_companyCodeKey);
 }
 
 /// Backend interface for secure storage operations.

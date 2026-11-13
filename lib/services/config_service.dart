@@ -7,11 +7,13 @@ import 'package:callnow_new/services/followup_service.dart';
 class ConfigService {
   static const String _baseUrlKey = 'base_url';
   static const String _userDataKey = 'user_data';
+  static const String _companyCodeKey = 'company_code';
   static const String _defaultBaseUrl =
       'https://callnow.increditsolutions.in/api/v1';
 
   static String _cachedBaseUrl = _defaultBaseUrl;
   static String? _cachedToken;
+  static String? _cachedCompanyCode;
   static Map<String, dynamic>? _cachedUserData;
   static bool _initialized = false;
 
@@ -20,6 +22,8 @@ class ConfigService {
     final prefs = await SharedPreferences.getInstance();
     _cachedBaseUrl = prefs.getString(_baseUrlKey) ?? _defaultBaseUrl;
     _cachedToken = await SecureStorageService.instance.readToken();
+    _cachedCompanyCode = await SecureStorageService.instance.readCompanyCode() ??
+        prefs.getString(_companyCodeKey);
     final userDataStr = prefs.getString(_userDataKey);
     if (userDataStr != null) {
       try {
@@ -72,6 +76,22 @@ class ConfigService {
   }
 
   static String? get token => _cachedToken;
+
+  static String? get companyCode => _cachedCompanyCode;
+
+  static Future<void> setCompanyCode(String? code) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (code != null && code.trim().isNotEmpty) {
+      final clean = code.trim().toLowerCase();
+      await SecureStorageService.instance.writeCompanyCode(clean);
+      await prefs.setString(_companyCodeKey, clean);
+      _cachedCompanyCode = clean;
+    } else {
+      await SecureStorageService.instance.deleteCompanyCode();
+      await prefs.remove(_companyCodeKey);
+      _cachedCompanyCode = null;
+    }
+  }
 
   static Map<String, dynamic>? get userData => _cachedUserData;
 
@@ -220,7 +240,7 @@ class ConfigService {
     return '';
   }
 
-  static Future<void> saveAuthData(String token, Map<String, dynamic> userData, {String? fallbackEmail}) async {
+  static Future<void> saveAuthData(String token, Map<String, dynamic> userData, {String? fallbackEmail, String? companyCode}) async {
     final prefs = await SharedPreferences.getInstance();
 
     // Preserve existing cached user fields so an empty profile from the server doesn't wipe them out!
@@ -248,6 +268,12 @@ class ConfigService {
         merged[k] = v;
       }
     });
+
+    final resolvedCompanyCode = (companyCode ?? merged['company_code'] ?? _cachedCompanyCode)?.toString().trim().toLowerCase();
+    if (resolvedCompanyCode != null && resolvedCompanyCode.isNotEmpty) {
+      merged['company_code'] = resolvedCompanyCode;
+      await setCompanyCode(resolvedCompanyCode);
+    }
 
     if (fallbackEmail != null && fallbackEmail.trim().isNotEmpty && fallbackEmail.contains('@')) {
       merged.putIfAbsent('email', () => fallbackEmail.trim());
@@ -286,12 +312,22 @@ class ConfigService {
     _cachedUserData = merged;
   }
 
-  static Future<void> clearAuthData() async {
+  static Future<void> clearAuthData({bool clearCompanyCode = false}) async {
     final prefs = await SharedPreferences.getInstance();
+    final savedCompany = _cachedCompanyCode;
     await SecureStorageService.instance.clearAll();
     await prefs.remove(_userDataKey);
     _cachedToken = null;
     _cachedUserData = null;
+    if (clearCompanyCode) {
+      _cachedCompanyCode = null;
+      await prefs.remove(_companyCodeKey);
+    } else if (savedCompany != null) {
+      // Retain company code across logouts so user does not need to retype it
+      await SecureStorageService.instance.writeCompanyCode(savedCompany);
+      await prefs.setString(_companyCodeKey, savedCompany);
+      _cachedCompanyCode = savedCompany;
+    }
     FollowupService.instance.clearLocalCache();
   }
 

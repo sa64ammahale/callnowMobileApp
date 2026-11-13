@@ -10,6 +10,7 @@ class UserProfile {
   final String mobile;
   final String role;
   final String companyName;
+  final String? companyCode;
   final String teamName;
   final String department;
   final String joinDate;
@@ -27,6 +28,7 @@ class UserProfile {
     required this.mobile,
     required this.role,
     required this.companyName,
+    this.companyCode,
     required this.teamName,
     required this.department,
     required this.joinDate,
@@ -188,6 +190,7 @@ class UserProfile {
       mobile: mobile,
       role: role,
       companyName: company,
+      companyCode: _extractString(user['company_code']).isNotEmpty ? _extractString(user['company_code']) : ConfigService.companyCode,
       teamName: team,
       department: dept,
       joinDate: joinDate,

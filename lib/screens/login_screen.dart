@@ -11,6 +11,7 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _companyCodeController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _apiTokenController = TextEditingController();
@@ -22,6 +23,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
+    _companyCodeController.text = ConfigService.companyCode ?? '';
     _checkExistingSession();
   }
 
@@ -48,15 +50,20 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       Map<String, dynamic> result;
+      final companyCode = _companyCodeController.text.trim().toLowerCase();
       
       if (_useApiToken) {
         // Login with API token directly
-        result = await ApiService.loginWithToken(_apiTokenController.text.trim());
+        result = await ApiService.loginWithToken(
+          _apiTokenController.text.trim(),
+          companyCode: companyCode,
+        );
       } else {
         // Login with email/password
         result = await ApiService.login(
           email: _emailController.text.trim(),
           password: _passwordController.text,
+          companyCode: companyCode,
         );
       }
 
@@ -85,6 +92,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
+    _companyCodeController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _apiTokenController.dispose();
@@ -267,6 +275,25 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
+
+                          // Company Code
+                          TextFormField(
+                            controller: _companyCodeController,
+                            textInputAction: TextInputAction.next,
+                            autocorrect: false,
+                            decoration: const InputDecoration(
+                              labelText: 'Company Code',
+                              hintText: 'e.g. incredit or acme',
+                              prefixIcon: Icon(Icons.business_outlined, size: 20),
+                            ),
+                            validator: (value) {
+                              if (value?.trim().isEmpty ?? true) {
+                                return 'Enter your company code';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 16),
 
                           if (!_useApiToken) ...[
                             // Email/Password Login

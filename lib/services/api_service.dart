@@ -22,11 +22,14 @@ class ApiService {
     return url;
   }
   static String? get _token => ConfigService.token;
+  static String? get _companyCode => ConfigService.companyCode;
 
   static Map<String, String> get _headers => {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
         if (_token != null) 'Authorization': 'Bearer $_token',
+        if (_companyCode != null && _companyCode!.isNotEmpty)
+          'X-Company-Code': _companyCode!,
       };
 
   // --- SERVER DIAGNOSTICS ---
@@ -82,16 +85,27 @@ class ApiService {
   static Future<Map<String, dynamic>> login({
     required String email,
     required String password,
+    String? companyCode,
   }) async {
+    final cleanCode = (companyCode ?? ConfigService.companyCode)?.trim().toLowerCase();
     // Try both email and username field names
     final fieldNames = ['email', 'username'];
     for (final fieldName in fieldNames) {
       final url = '$_baseUrl/auth/login';
 
-      final body = {fieldName: email, 'password': password};
+      final body = <String, dynamic>{
+        fieldName: email,
+        'password': password,
+        if (cleanCode != null && cleanCode.isNotEmpty) 'company_code': cleanCode,
+      };
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (cleanCode != null && cleanCode.isNotEmpty) 'X-Company-Code': cleanCode,
+      };
       final response = await _client.post(
         Uri.parse(url),
-        headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+        headers: headers,
         body: json.encode(body),
       );
 
@@ -102,11 +116,17 @@ class ApiService {
           final userData = data['data']['user'] is Map
               ? Map<String, dynamic>.from(data['data']['user'])
               : <String, dynamic>{};
-          await ConfigService.saveAuthData(token, userData, fallbackEmail: email);
+          final returnedCompanyCode = data['data']['company_code']?.toString() ?? cleanCode;
+          if (returnedCompanyCode != null && returnedCompanyCode.isNotEmpty) {
+            userData['company_code'] = returnedCompanyCode;
+            await ConfigService.setCompanyCode(returnedCompanyCode);
+          }
+          await ConfigService.saveAuthData(token, userData, fallbackEmail: email, companyCode: returnedCompanyCode);
           return {
             'success': true,
             'token': token,
             'user': userData,
+            'company_code': returnedCompanyCode,
             'expires_at': data['data']['expires_at'],
           };
         }
@@ -142,14 +162,19 @@ class ApiService {
   }
 
   // Login with pre-generated API token (Bearer token)
-  static Future<Map<String, dynamic>> loginWithToken(String token) async {
+  static Future<Map<String, dynamic>> loginWithToken(String token, {String? companyCode}) async {
     if (token.isEmpty) {
       throw Exception('API token is required');
     }
 
+    final cleanCode = (companyCode ?? ConfigService.companyCode)?.trim().toLowerCase();
+    if (cleanCode != null && cleanCode.isNotEmpty) {
+      await ConfigService.setCompanyCode(cleanCode);
+    }
+
     // Save token first, then verify with getProfile
     final tempToken = token;
-    await ConfigService.saveAuthData(tempToken, {});
+    await ConfigService.saveAuthData(tempToken, {}, companyCode: cleanCode);
 
     try {
       // Verify token works by getting profile
@@ -158,6 +183,7 @@ class ApiService {
         'success': true,
         'token': tempToken,
         'user': profile,
+        'company_code': cleanCode,
       };
     } catch (e) {
       await ConfigService.clearAuthData();
