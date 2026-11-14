@@ -6,10 +6,23 @@ import 'package:callnow_new/services/secure_http_client.dart';
 import 'package:callnow_new/model/user_profile.dart';
 
 class ApiService {
-  static final http.Client _client = SecureHttpClient(
+  static http.Client _client = SecureHttpClient(
     requireHttps: true,
     enablePinning: SslPinningConfig.enabled,
   );
+
+  @visibleForTesting
+  static void setClientForTesting(http.Client client) {
+    _client = client;
+  }
+
+  @visibleForTesting
+  static void resetClient() {
+    _client = SecureHttpClient(
+      requireHttps: true,
+      enablePinning: SslPinningConfig.enabled,
+    );
+  }
 
   static String get _baseUrl {
     String url = ConfigService.baseUrl.trim();

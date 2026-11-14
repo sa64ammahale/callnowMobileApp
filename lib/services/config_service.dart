@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/model/user_profile.dart';
 import 'package:callnow_new/services/secure_storage_service.dart';
@@ -16,6 +17,15 @@ class ConfigService {
   static String? _cachedCompanyCode;
   static Map<String, dynamic>? _cachedUserData;
   static bool _initialized = false;
+
+  @visibleForTesting
+  static void resetForTesting() {
+    _initialized = false;
+    _cachedBaseUrl = _defaultBaseUrl;
+    _cachedToken = null;
+    _cachedCompanyCode = null;
+    _cachedUserData = null;
+  }
 
   static Future<void> init() async {
     if (_initialized) return;
@@ -298,8 +308,9 @@ class ConfigService {
     if (merged['email'] != null && merged['email'].toString().isNotEmpty) {
       await SecureStorageService.instance.writeEmail(merged['email'].toString());
     }
-    if (merged['phone'] != null && merged['phone'].toString().isNotEmpty) {
-      await SecureStorageService.instance.writePhone(merged['phone'].toString());
+    final phoneVal = merged['phone'] ?? merged['mobile'] ?? merged['phone_number'] ?? merged['mobile_no'];
+    if (phoneVal != null && phoneVal.toString().isNotEmpty) {
+      await SecureStorageService.instance.writePhone(phoneVal.toString());
     }
     if (merged['name'] != null && merged['name'].toString().isNotEmpty) {
       await SecureStorageService.instance.writeName(merged['name'].toString());
