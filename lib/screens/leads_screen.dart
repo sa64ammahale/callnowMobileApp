@@ -176,6 +176,13 @@ class _LeadsScreenState extends State<LeadsScreen> {
           lead.assignedUser.toLowerCase() != 'unassigned') {
         final alreadyPresent = target.any((o) => o['id'] == lead.assignedUserId);
         if (!alreadyPresent) {
+          // Defense-in-depth: If supervisor, do not merge higher-level managers/admins into officer filter
+          if (ConfigService.isSupervisor) {
+            final nameUpper = lead.assignedUser.toUpperCase();
+            if (nameUpper.contains('ADMIN') || nameUpper.contains('MANAGER') || nameUpper.contains('DIRECTOR')) {
+              continue;
+            }
+          }
           target.add({
             'id': lead.assignedUserId!,
             'name': lead.assignedUser,

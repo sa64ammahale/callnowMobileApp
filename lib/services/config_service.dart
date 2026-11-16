@@ -222,6 +222,11 @@ class ConfigService {
         r.contains('MANAGER');
   }
 
+  static bool get isSupervisor {
+    final r = userRole.toUpperCase();
+    return r.contains('SUPERVISOR') && !isAdminOrManager;
+  }
+
   static String get userId {
     final u = _cachedUserData;
     if (u == null) return 'N/A';

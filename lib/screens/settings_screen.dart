@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:callnow_new/screens/calling_desk_screen.dart';
 import 'package:callnow_new/screens/profile_screen.dart';
 import 'package:callnow_new/screens/whatsapp_message_editor_screen.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
+import 'package:callnow_new/services/calling_preferences_service.dart';
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/whatsapp_message_service.dart';
 
@@ -16,24 +18,84 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _vibrateOnEnd = true;
   bool _keepScreenOn = true;
+  bool _autoCopyNumber = false;
+  String _preferredDialer = CallingPreferencesService.dialerSystem;
   bool _quickWhatsAppPrompt = true;
 
   @override
   void initState() {
     super.initState();
-    _loadWhatsAppPreference();
+    _loadPreferences();
   }
 
-  Future<void> _loadWhatsAppPreference() async {
+  Future<void> _loadPreferences() async {
     try {
-      final enabled = await WhatsAppMessageService.isIntroEnabled();
-      if (mounted) setState(() => _quickWhatsAppPrompt = enabled);
-    } catch (error) {
+      final vibrate = await CallingPreferencesService.isVibrateOnCallEndEnabled();
+      final keepAwake = await CallingPreferencesService.isKeepScreenAwakeEnabled();
+      final dialer = await CallingPreferencesService.getPreferredDialer();
+      final autoCopy = await CallingPreferencesService.isAutoCopyNumberEnabled();
+      final whatsApp = await WhatsAppMessageService.isIntroEnabled();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load WhatsApp preference: $error')),
-        );
+        setState(() {
+          _vibrateOnEnd = vibrate;
+          _keepScreenOn = keepAwake;
+          _preferredDialer = dialer;
+          _autoCopyNumber = autoCopy;
+          _quickWhatsAppPrompt = whatsApp;
+        });
       }
+    } catch (_) {}
+  }
+
+  Future<void> _setVibrateOnEnd(bool val) async {
+    await CallingPreferencesService.setVibrateOnCallEnd(val);
+    if (mounted) setState(() => _vibrateOnEnd = val);
+  }
+
+  Future<void> _setKeepScreenOn(bool val) async {
+    await CallingPreferencesService.setKeepScreenAwake(val);
+    if (mounted) setState(() => _keepScreenOn = val);
+  }
+
+  Future<void> _setAutoCopyNumber(bool val) async {
+    await CallingPreferencesService.setAutoCopyNumber(val);
+    if (mounted) setState(() => _autoCopyNumber = val);
+  }
+
+  Future<void> _showDialerSelectionDialog() async {
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Select Preferred Calling Method', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        children: [
+          ListTile(
+            leading: Icon(
+              _preferredDialer == CallingPreferencesService.dialerSystem
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: const Color(0xFF2563EB),
+            ),
+            title: const Text('System Phone Dialer (Recommended)'),
+            subtitle: const Text('Opens the native Android phone dialer with number pre-dialed'),
+            onTap: () => Navigator.pop(ctx, CallingPreferencesService.dialerSystem),
+          ),
+          ListTile(
+            leading: Icon(
+              _preferredDialer == CallingPreferencesService.dialerDirect
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: const Color(0xFF2563EB),
+            ),
+            title: const Text('Direct Action / Prompt'),
+            subtitle: const Text('Prompts system handler selection on each call'),
+            onTap: () => Navigator.pop(ctx, CallingPreferencesService.dialerDirect),
+          ),
+        ],
+      ),
+    );
+    if (selected != null) {
+      await CallingPreferencesService.setPreferredDialer(selected);
+      if (mounted) setState(() => _preferredDialer = selected);
     }
   }
 
@@ -332,7 +394,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         subtitle: const Text('Haptic feedback when telephone call terminates', style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
                         value: _vibrateOnEnd,
                         activeThumbColor: const Color(0xFF2563EB),
-                        onChanged: (val) => setState(() => _vibrateOnEnd = val),
+                        onChanged: _setVibrateOnEnd,
                       ),
                       const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF1F5F9)),
                       SwitchListTile(
@@ -340,7 +402,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         subtitle: const Text('Prevent display from sleeping during dialer sessions', style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
                         value: _keepScreenOn,
                         activeThumbColor: const Color(0xFF2563EB),
-                        onChanged: (val) => setState(() => _keepScreenOn = val),
+                        onChanged: _setKeepScreenOn,
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF1F5F9)),
+                      SwitchListTile(
+                        title: const Text('Auto-Copy Number on Dial', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
+                        subtitle: const Text('Copy client phone to clipboard automatically when placing calls', style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
+                        value: _autoCopyNumber,
+                        activeThumbColor: const Color(0xFF2563EB),
+                        onChanged: _setAutoCopyNumber,
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF1F5F9)),
+                      ListTile(
+                        leading: const Icon(Icons.phone_forwarded_rounded, color: Color(0xFF2563EB), size: 20),
+                        title: const Text('Preferred Calling Method', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
+                        subtitle: Text(
+                          _preferredDialer == CallingPreferencesService.dialerDirect
+                              ? 'Direct Action / Prompt'
+                              : 'System Phone Dialer (Default)',
+                          style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: _showDialerSelectionDialog,
                       ),
                       const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF1F5F9)),
                       SwitchListTile(
@@ -449,13 +532,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         title: const Text('Background Battery Exemption', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
                         subtitle: const Text('Ensure background call tracking remains uninterrupted', style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
                         trailing: const Icon(Icons.chevron_right, size: 20),
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Battery optimization status: Unrestricted.'),
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
+                        onTap: () async {
+                          final opened = await CallTrackingService.openAppSettings();
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  opened
+                                      ? 'Opened system settings. Set Battery usage to "Unrestricted".'
+                                      : 'Battery optimization status: Unrestricted for background tracking.',
+                                ),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          }
                         },
                       ),
                       const Divider(height: 1, indent: 16, endIndent: 16, color: Color(0xFFF1F5F9)),
@@ -471,13 +561,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         title: const Text('Refresh Leads Queue', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
                         subtitle: const Text('Sync newly assigned contact leads from CRM', style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
                         trailing: const Icon(Icons.chevron_right, size: 20),
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Leads queue synchronization requested.'),
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
+                        onTap: () async {
+                          try {
+                            CallingDeskScreen.resetSessionQueue();
+                            final leads = await ApiService.getBatchLeads(limit: 10);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Leads queue synced successfully! (${leads.length} leads ready in desk queue)'),
+                                  backgroundColor: Colors.green.shade700,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            }
+                          } catch (e) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Failed to sync leads queue: ${e.toString().replaceFirst('Exception: ', '')}'),
+                                  backgroundColor: Colors.red.shade700,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            }
+                          }
                         },
                       ),
                     ],

@@ -360,6 +360,16 @@ class CallTrackingService {
     }
   }
 
+  /// Opens application system settings on Android
+  static Future<bool> openAppSettings() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
+    try {
+      return await _verifierChannel.invokeMethod<bool>('openAppSettings') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Helper to trigger a phone call via the system dialer
   static Future<bool> makePhoneCall(String phoneNumber) async {
     final cleanNumber = phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');

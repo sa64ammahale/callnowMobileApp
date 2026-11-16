@@ -44,6 +44,18 @@ class MainActivity: FlutterActivity() {
                     val callLogs = queryRecentCallLogs(limit, afterTimestamp)
                     result.success(callLogs)
                 }
+                "openAppSettings" -> {
+                    try {
+                        val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.fromParts("package", packageName, null)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(intent)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.success(false)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }

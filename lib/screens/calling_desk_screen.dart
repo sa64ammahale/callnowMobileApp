@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:callnow_new/constants/lead_stages.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
+import 'package:callnow_new/services/calling_preferences_service.dart';
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
 import 'package:callnow_new/services/whatsapp_message_service.dart';
@@ -13,6 +15,8 @@ class CallingDeskScreen extends StatefulWidget {
   const CallingDeskScreen({super.key, this.onOpenReports});
 
   static final Set<String> _sessionProcessedLeadIds = {};
+
+  static void resetSessionQueue() => _sessionProcessedLeadIds.clear();
 
   @visibleForTesting
   static void clearSessionProcessedLeads() => _sessionProcessedLeadIds.clear();
@@ -235,6 +239,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     if (state == AppLifecycleState.resumed) {
       // User returned from dialer, auto-verify call log immediately and with retry delays
       _verifyCallWithAndroidLog();
+      CallingPreferencesService.triggerCallEndVibration();
       Future.delayed(const Duration(milliseconds: 1200), () {
         if (mounted && (_verifiedCallLog == null || !_verifiedCallLog!.isDialed)) {
           _verifyCallWithAndroidLog();
@@ -640,6 +645,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
         const SnackBar(content: Text('No mobile number available for this contact.')),
       );
       return;
+    }
+
+    if (await CallingPreferencesService.isAutoCopyNumberEnabled()) {
+      Clipboard.setData(ClipboardData(text: mobile));
     }
 
     final launched = await CallTrackingService.makePhoneCall(mobile);
