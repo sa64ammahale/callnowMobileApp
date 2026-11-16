@@ -40,6 +40,61 @@ class _LeadsScreenState extends State<LeadsScreen> {
   List<Map<String, dynamic>> _officers = [];
   bool _isLoadingOfficers = false;
 
+  // Date filtering state - defaults to 'month' (Current Month leads on priority)
+  String _selectedPeriod = 'month';
+  DateTimeRange? _customDateRange;
+
+  final List<Map<String, String>> _periodOptions = [
+    {'id': 'month', 'label': 'This Month'},
+    {'id': 'today', 'label': 'Today'},
+    {'id': 'yesterday', 'label': 'Yesterday'},
+    {'id': 'week', 'label': 'This Week'},
+    {'id': 'last_month', 'label': 'Last Month'},
+    {'id': 'custom', 'label': 'Custom Range'},
+    {'id': 'all', 'label': 'All Time'},
+  ];
+
+  String get _currentPeriodLabel {
+    if (_selectedPeriod == 'custom' && _customDateRange != null) {
+      final start = '${_customDateRange!.start.day}/${_customDateRange!.start.month}';
+      final end = '${_customDateRange!.end.day}/${_customDateRange!.end.month}';
+      return '$start - $end';
+    }
+    final match = _periodOptions.firstWhere(
+      (p) => p['id'] == _selectedPeriod,
+      orElse: () => {'id': _selectedPeriod, 'label': 'This Month'},
+    );
+    return match['label'] ?? 'This Month';
+  }
+
+  (String?, String?, String?) _computeDateParams() {
+    String? dateFrom;
+    String? dateTo;
+    String? periodParam = _selectedPeriod;
+
+    if (_selectedPeriod == 'custom' && _customDateRange != null) {
+      dateFrom = _customDateRange!.start.toIso8601String().substring(0, 10);
+      dateTo = _customDateRange!.end.toIso8601String().substring(0, 10);
+      periodParam = null;
+    } else if (_selectedPeriod == 'last_month') {
+      final now = DateTime.now();
+      final firstDayLastMonth = DateTime(now.year, now.month - 1, 1);
+      final lastDayLastMonth = DateTime(now.year, now.month, 0);
+      dateFrom = firstDayLastMonth.toIso8601String().substring(0, 10);
+      dateTo = lastDayLastMonth.toIso8601String().substring(0, 10);
+      periodParam = null;
+    } else if (_selectedPeriod == 'month') {
+      periodParam = 'month';
+      final now = DateTime.now();
+      final firstDayThisMonth = DateTime(now.year, now.month, 1);
+      dateFrom = firstDayThisMonth.toIso8601String().substring(0, 10);
+    } else if (_selectedPeriod == 'all') {
+      periodParam = null;
+    }
+
+    return (periodParam, dateFrom, dateTo);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -126,10 +181,14 @@ class _LeadsScreenState extends State<LeadsScreen> {
     });
 
     try {
+      final (periodParam, dateFrom, dateTo) = _computeDateParams();
       final res = await ApiService.getCreatedLeads(
         page: 1,
         limit: 20,
         source: 'all',
+        period: periodParam,
+        dateFrom: dateFrom,
+        dateTo: dateTo,
         userId: _selectedOfficerId,
       );
       debugPrint('[LeadsScreen] getCreatedLeads RAW RESPONSE: $res');
@@ -176,10 +235,14 @@ class _LeadsScreenState extends State<LeadsScreen> {
 
     try {
       final nextPage = _currentPage + 1;
+      final (periodParam, dateFrom, dateTo) = _computeDateParams();
       final res = await ApiService.getCreatedLeads(
         page: nextPage,
         limit: 30,
         source: 'all',
+        period: periodParam,
+        dateFrom: dateFrom,
+        dateTo: dateTo,
         userId: _selectedOfficerId,
       );
       final raw = res['leads'];
@@ -1180,13 +1243,13 @@ class _LeadsScreenState extends State<LeadsScreen> {
         onRefresh: _fetchLeads,
         child: Column(
           children: [
-            // Top Stage Filter Carousel
+            // Top Stage Filter Carousel (compact)
             Container(
               color: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.symmetric(vertical: 4),
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Row(
                   children: [
                     _buildStageCarouselChip(
@@ -1196,11 +1259,11 @@ class _LeadsScreenState extends State<LeadsScreen> {
                       icon: Icons.all_inbox_rounded,
                       color: const Color(0xFF2563EB),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                     ...LeadStageHelper.stageKeys.map((stageKey) {
                       final count = _getStageCount(stageKey);
                       return Padding(
-                        padding: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.only(right: 6),
                         child: _buildStageCarouselChip(
                           key: stageKey,
                           label: LeadStageHelper.getShortLabel(stageKey),
@@ -1216,20 +1279,20 @@ class _LeadsScreenState extends State<LeadsScreen> {
             ),
             const Divider(height: 1),
 
-            // Search Bar
+            // Search Bar (optimized height)
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
               child: SizedBox(
-                height: 40,
+                height: 36,
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
                     hintText: 'Search leads by name, mobile, loan type, company...',
-                    hintStyle: const TextStyle(fontSize: 13),
-                    prefixIcon: const Icon(Icons.search, size: 18),
+                    hintStyle: const TextStyle(fontSize: 12),
+                    prefixIcon: const Icon(Icons.search, size: 16),
                     suffixIcon: _searchController.text.isNotEmpty
                         ? IconButton(
-                            icon: const Icon(Icons.clear, size: 16),
+                            icon: const Icon(Icons.clear, size: 15),
                             onPressed: () => _searchController.clear(),
                           )
                         : null,
@@ -1237,7 +1300,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
                     filled: true,
                     fillColor: const Color(0xFFF1F5F9),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(18),
                       borderSide: BorderSide.none,
                     ),
                   ),
@@ -1245,9 +1308,8 @@ class _LeadsScreenState extends State<LeadsScreen> {
               ),
             ),
 
-            // Subordinate Officer Filter Pill Bar (Super Admin, Admin, Supervisor only)
-            if (ConfigService.isManagementOrSupervisor)
-              _buildOfficerFilterBar(),
+            // Consolidated Filter Bar (Date Filter + Subordinate Officer Filter)
+            _buildFilterBar(),
 
             // Lead List
             Expanded(
@@ -1281,13 +1343,13 @@ class _LeadsScreenState extends State<LeadsScreen> {
       },
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
           color: isSelected ? color : color.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: isSelected ? color : color.withValues(alpha: 0.25),
-            width: isSelected ? 1.5 : 1,
+            width: isSelected ? 1.4 : 1,
           ),
         ),
         child: Row(
@@ -1295,31 +1357,31 @@ class _LeadsScreenState extends State<LeadsScreen> {
           children: [
             Icon(
               icon,
-              size: 14,
+              size: 13,
               color: isSelected ? Colors.white : color,
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 5),
             Text(
               label,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
                 color: isSelected ? Colors.white : const Color(0xFF1E293B),
               ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 5),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
               decoration: BoxDecoration(
                 color: isSelected
                     ? Colors.white.withValues(alpha: 0.25)
                     : color.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
                 '$count',
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 10,
                   fontWeight: FontWeight.bold,
                   color: isSelected ? Colors.white : color,
                 ),
@@ -1331,85 +1393,280 @@ class _LeadsScreenState extends State<LeadsScreen> {
     );
   }
 
-  Widget _buildOfficerFilterBar() {
-    final isFiltered = _selectedOfficerId != null;
+  Widget _buildFilterBar() {
+    final isOfficerFiltered = _selectedOfficerId != null;
+    final isDateFiltered = _selectedPeriod != 'all';
+    final isSupervisor = ConfigService.isManagementOrSupervisor;
+
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
       child: Row(
         children: [
+          // Date Filter Pill
           Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: _showOfficerSelectionSheet,
-              borderRadius: BorderRadius.circular(20),
+              onTap: _showPeriodSelectionSheet,
+              borderRadius: BorderRadius.circular(16),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                 decoration: BoxDecoration(
-                  color: isFiltered ? const Color(0xFFEEF2FF) : const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(20),
+                  color: isDateFiltered ? const Color(0xFFEFF6FF) : const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                    color: isFiltered ? const Color(0xFF4F46E5) : const Color(0xFFE2E8F0),
-                    width: isFiltered ? 1.3 : 1.0,
+                    color: isDateFiltered ? const Color(0xFF3B82F6) : const Color(0xFFE2E8F0),
+                    width: isDateFiltered ? 1.2 : 1.0,
                   ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      Icons.badge_outlined,
-                      size: 14,
-                      color: isFiltered ? const Color(0xFF4F46E5) : const Color(0xFF64748B),
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      isFiltered ? 'Officer: $_selectedOfficerName' : 'Filter by Officer',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: isFiltered ? FontWeight.bold : FontWeight.w500,
-                        color: isFiltered ? const Color(0xFF4F46E5) : const Color(0xFF475569),
-                      ),
+                      Icons.calendar_today_outlined,
+                      size: 12,
+                      color: isDateFiltered ? const Color(0xFF2563EB) : const Color(0xFF64748B),
                     ),
                     const SizedBox(width: 4),
-                    if (isFiltered)
-                      GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _selectedOfficerId = null;
-                            _selectedOfficerName = null;
-                          });
-                          _fetchLeads();
-                        },
-                        child: const Padding(
-                          padding: EdgeInsets.only(left: 2),
-                          child: Icon(Icons.cancel, size: 14, color: Color(0xFF4F46E5)),
-                        ),
-                      )
-                    else
-                      const Icon(Icons.arrow_drop_down, size: 16, color: Color(0xFF64748B)),
+                    Text(
+                      _currentPeriodLabel,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: isDateFiltered ? FontWeight.bold : FontWeight.w500,
+                        color: isDateFiltered ? const Color(0xFF1D4ED8) : const Color(0xFF475569),
+                      ),
+                    ),
+                    const SizedBox(width: 3),
+                    const Icon(Icons.arrow_drop_down, size: 14, color: Color(0xFF64748B)),
                   ],
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
+
+          // Officer Filter Pill (for Super Admin, Admin, Supervisor)
+          if (isSupervisor) ...[
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _showOfficerSelectionSheet,
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isOfficerFiltered ? const Color(0xFFEEF2FF) : const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: isOfficerFiltered ? const Color(0xFF4F46E5) : const Color(0xFFE2E8F0),
+                      width: isOfficerFiltered ? 1.2 : 1.0,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.badge_outlined,
+                        size: 12,
+                        color: isOfficerFiltered ? const Color(0xFF4F46E5) : const Color(0xFF64748B),
+                      ),
+                      const SizedBox(width: 4),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 105),
+                        child: Text(
+                          isOfficerFiltered ? _selectedOfficerName! : 'Officer',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: isOfficerFiltered ? FontWeight.bold : FontWeight.w500,
+                            color: isOfficerFiltered ? const Color(0xFF4F46E5) : const Color(0xFF475569),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      if (isOfficerFiltered)
+                        GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _selectedOfficerId = null;
+                              _selectedOfficerName = null;
+                            });
+                            _fetchLeads();
+                          },
+                          child: const Icon(Icons.cancel, size: 13, color: Color(0xFF4F46E5)),
+                        )
+                      else
+                        const Icon(Icons.arrow_drop_down, size: 14, color: Color(0xFF64748B)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
+
+          // Right aligned status / lead counter
           Expanded(
             child: Text(
-              isFiltered
-                  ? 'Showing ${_filteredLeads.length} leads'
-                  : '⭐ Own leads prioritized',
+              '${_filteredLeads.length} leads',
               textAlign: TextAlign.end,
               style: const TextStyle(
                 fontSize: 11,
                 color: Color(0xFF64748B),
-                fontWeight: FontWeight.w500,
+                fontWeight: FontWeight.w600,
               ),
-              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
       ),
     );
+  }
+
+  void _showPeriodSelectionSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFCBD5E1),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.calendar_month, color: Color(0xFF2563EB), size: 18),
+                    SizedBox(width: 8),
+                    Text(
+                      'Filter Leads by Date',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              ..._periodOptions.map((opt) {
+                final id = opt['id']!;
+                final label = opt['label']!;
+                final isSelected = _selectedPeriod == id;
+
+                IconData icon;
+                switch (id) {
+                  case 'month':
+                    icon = Icons.calendar_month_outlined;
+                    break;
+                  case 'today':
+                    icon = Icons.today_outlined;
+                    break;
+                  case 'yesterday':
+                    icon = Icons.history_toggle_off;
+                    break;
+                  case 'week':
+                    icon = Icons.view_week_outlined;
+                    break;
+                  case 'last_month':
+                    icon = Icons.history_outlined;
+                    break;
+                  case 'custom':
+                    icon = Icons.date_range_outlined;
+                    break;
+                  case 'all':
+                  default:
+                    icon = Icons.all_inclusive;
+                    break;
+                }
+
+                return ListTile(
+                  dense: true,
+                  visualDensity: const VisualDensity(vertical: -1),
+                  leading: Icon(
+                    icon,
+                    size: 18,
+                    color: isSelected ? const Color(0xFF2563EB) : const Color(0xFF64748B),
+                  ),
+                  title: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                      color: isSelected ? const Color(0xFF2563EB) : const Color(0xFF1E293B),
+                    ),
+                  ),
+                  trailing: isSelected
+                      ? const Icon(Icons.check_circle, color: Color(0xFF2563EB), size: 18)
+                      : null,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    if (id == 'custom') {
+                      _selectCustomDateRange();
+                    } else {
+                      setState(() {
+                        _selectedPeriod = id;
+                        _customDateRange = null;
+                      });
+                      _fetchLeads();
+                    }
+                  },
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _selectCustomDateRange() async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 2),
+      lastDate: DateTime(now.year + 1),
+      initialDateRange: _customDateRange ??
+          DateTimeRange(
+            start: DateTime(now.year, now.month, 1),
+            end: now,
+          ),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFF2563EB),
+              onPrimary: Colors.white,
+              onSurface: Color(0xFF1E293B),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _selectedPeriod = 'custom';
+        _customDateRange = picked;
+      });
+      _fetchLeads();
+    }
   }
 
   void _showOfficerSelectionSheet() {
