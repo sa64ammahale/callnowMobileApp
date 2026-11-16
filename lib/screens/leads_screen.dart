@@ -34,12 +34,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
   bool _hasMoreLeads = false;
   bool _isLoadingMoreLeads = false;
 
-  // Subordinate officer filtering for Super Admin, Admin, and Supervisor
-  int? _selectedOfficerId;
-  String? _selectedOfficerName;
-  List<Map<String, dynamic>> _officers = [];
-  bool _isLoadingOfficers = false;
-
   // Date filtering state - defaults to 'month' (Current Month leads on priority)
   String _selectedPeriod = 'month';
   DateTimeRange? _customDateRange;
@@ -99,9 +93,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
   void initState() {
     super.initState();
     _fetchLeads();
-    if (ConfigService.isManagementOrSupervisor) {
-      _loadOfficers();
-    }
     _searchController.addListener(_applyFilters);
   }
 
@@ -109,88 +100,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadOfficers() async {
-    if (!ConfigService.isManagementOrSupervisor) return;
-    setState(() => _isLoadingOfficers = true);
-    try {
-      final res = await ApiService.getTeamOfficers();
-      final rawOfficers = res['officers'];
-      List<Map<String, dynamic>> loadedOfficers = [];
-      if (rawOfficers is List) {
-        for (final item in rawOfficers) {
-          if (item is Map) {
-            final id = int.tryParse(item['id']?.toString() ?? item['user_id']?.toString() ?? '0') ?? 0;
-            final name = (item['name'] ?? item['user_name'] ?? item['username'] ?? '').toString().trim();
-            final role = (item['role'] ?? item['designation'] ?? 'Officer').toString().trim();
-            if (id > 0 && name.isNotEmpty) {
-              loadedOfficers.add({
-                'id': id,
-                'name': name,
-                'role': role,
-              });
-            }
-          }
-        }
-      }
-
-      // Ensure current user (e.g. System Administrator) is always present for self-filtering
-      final myId = ConfigService.userProfile.id;
-      final myName = ConfigService.userDisplayName;
-      final myRole = ConfigService.userRole;
-      if (myId > 0 && !loadedOfficers.any((o) => o['id'] == myId)) {
-        loadedOfficers.insert(0, {
-          'id': myId,
-          'name': '$myName (Me)',
-          'role': myRole,
-        });
-      }
-
-      _mergeOfficersFromLeads(loadedOfficers);
-
-      if (mounted) {
-        setState(() {
-          _officers = loadedOfficers;
-          _isLoadingOfficers = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('[LeadsScreen] Error loading officers: $e');
-      if (mounted) {
-        List<Map<String, dynamic>> fallback = [];
-        _mergeOfficersFromLeads(fallback);
-        setState(() {
-          _officers = fallback;
-          _isLoadingOfficers = false;
-        });
-      }
-    }
-  }
-
-  void _mergeOfficersFromLeads(List<Map<String, dynamic>> target) {
-    for (final lead in _allLeads) {
-      if (lead.assignedUserId != null &&
-          lead.assignedUserId! > 0 &&
-          lead.assignedUser.isNotEmpty &&
-          lead.assignedUser.toLowerCase() != 'unassigned') {
-        final alreadyPresent = target.any((o) => o['id'] == lead.assignedUserId);
-        if (!alreadyPresent) {
-          // Defense-in-depth: If supervisor, do not merge higher-level managers/admins into officer filter
-          if (ConfigService.isSupervisor) {
-            final nameUpper = lead.assignedUser.toUpperCase();
-            if (nameUpper.contains('ADMIN') || nameUpper.contains('MANAGER') || nameUpper.contains('DIRECTOR')) {
-              continue;
-            }
-          }
-          target.add({
-            'id': lead.assignedUserId!,
-            'name': lead.assignedUser,
-            'role': 'Officer',
-          });
-        }
-      }
-    }
   }
 
   Future<void> _fetchLeads() async {
@@ -208,7 +117,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
         period: periodParam,
         dateFrom: dateFrom,
         dateTo: dateTo,
-        userId: _selectedOfficerId,
+        scope: 'mine',
       );
       debugPrint('[LeadsScreen] getCreatedLeads RAW RESPONSE: $res');
       final raw = res['leads'];
@@ -233,9 +142,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
           _hasMoreLeads = _currentPage < _totalPages;
           _isLoading = false;
         });
-        if (ConfigService.isManagementOrSupervisor) {
-          _mergeOfficersFromLeads(_officers);
-        }
         _applyFilters();
       }
     } catch (e) {
@@ -262,7 +168,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
         period: periodParam,
         dateFrom: dateFrom,
         dateTo: dateTo,
-        userId: _selectedOfficerId,
+        scope: 'mine',
       );
       final raw = res['leads'];
       final pagObj = res['pagination'];
@@ -286,9 +192,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
           _hasMoreLeads = _currentPage < _totalPages;
           _isLoadingMoreLeads = false;
         });
-        if (ConfigService.isManagementOrSupervisor) {
-          _mergeOfficersFromLeads(_officers);
-        }
         _applyFilters();
       }
     } catch (e) {
@@ -1413,16 +1316,14 @@ class _LeadsScreenState extends State<LeadsScreen> {
   }
 
   Widget _buildFilterBar() {
-    final isOfficerFiltered = _selectedOfficerId != null;
     final isDateFiltered = _selectedPeriod != 'all';
-    final isSupervisor = ConfigService.isManagementOrSupervisor;
 
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
       child: Row(
         children: [
-          // Date Filter Pill
+          // Date Filter Pill (Kept as requested)
           Material(
             color: Colors.transparent,
             child: InkWell(
@@ -1462,67 +1363,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
               ),
             ),
           ),
-          const SizedBox(width: 6),
-
-          // Officer Filter Pill (for Super Admin, Admin, Supervisor)
-          if (isSupervisor) ...[
-            Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: _showOfficerSelectionSheet,
-                borderRadius: BorderRadius.circular(16),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: isOfficerFiltered ? const Color(0xFFEEF2FF) : const Color(0xFFF8FAFC),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: isOfficerFiltered ? const Color(0xFF4F46E5) : const Color(0xFFE2E8F0),
-                      width: isOfficerFiltered ? 1.2 : 1.0,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.badge_outlined,
-                        size: 12,
-                        color: isOfficerFiltered ? const Color(0xFF4F46E5) : const Color(0xFF64748B),
-                      ),
-                      const SizedBox(width: 4),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 105),
-                        child: Text(
-                          isOfficerFiltered ? _selectedOfficerName! : 'Officer',
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: isOfficerFiltered ? FontWeight.bold : FontWeight.w500,
-                            color: isOfficerFiltered ? const Color(0xFF4F46E5) : const Color(0xFF475569),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                      if (isOfficerFiltered)
-                        GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _selectedOfficerId = null;
-                              _selectedOfficerName = null;
-                            });
-                            _fetchLeads();
-                          },
-                          child: const Icon(Icons.cancel, size: 13, color: Color(0xFF4F46E5)),
-                        )
-                      else
-                        const Icon(Icons.arrow_drop_down, size: 14, color: Color(0xFF64748B)),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-          ],
+          const SizedBox(width: 8),
 
           // Right aligned status / lead counter
           Expanded(
@@ -1686,246 +1527,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
       });
       _fetchLeads();
     }
-  }
-
-  void _showOfficerSelectionSheet() {
-    final searchCtrl = TextEditingController();
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        String officerSearch = '';
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            final filteredOfficers = _officers.where((o) {
-              final name = (o['name'] ?? '').toString().toLowerCase();
-              final role = (o['role'] ?? '').toString().toLowerCase();
-              final q = officerSearch.toLowerCase();
-              return q.isEmpty || name.contains(q) || role.contains(q);
-            }).toList();
-
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(ctx).viewInsets.bottom,
-              ),
-              child: Container(
-                height: MediaQuery.of(context).size.height * 0.70,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                ),
-                child: Column(
-                  children: [
-                    Center(
-                      child: Container(
-                        margin: const EdgeInsets.only(top: 10, bottom: 8),
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFCBD5E1),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Row(
-                            children: [
-                              Icon(Icons.people_outline, color: Color(0xFF2563EB), size: 20),
-                              SizedBox(width: 8),
-                              Text(
-                                'Filter by Officer / User',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF0F172A),
-                                ),
-                              ),
-                            ],
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close, size: 20),
-                            onPressed: () => Navigator.pop(context),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(height: 1),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-                      child: SizedBox(
-                        height: 38,
-                        child: TextField(
-                          controller: searchCtrl,
-                          decoration: InputDecoration(
-                            hintText: 'Search officer by name or role...',
-                            hintStyle: const TextStyle(fontSize: 12),
-                            prefixIcon: const Icon(Icons.search, size: 16),
-                            suffixIcon: officerSearch.isNotEmpty
-                                ? IconButton(
-                                    icon: const Icon(Icons.clear, size: 16),
-                                    onPressed: () {
-                                      searchCtrl.clear();
-                                      setSheetState(() => officerSearch = '');
-                                    },
-                                  )
-                                : null,
-                            contentPadding: EdgeInsets.zero,
-                            filled: true,
-                            fillColor: const Color(0xFFF1F5F9),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                              borderSide: BorderSide.none,
-                            ),
-                          ),
-                          onChanged: (val) {
-                            setSheetState(() => officerSearch = val.trim());
-                          },
-                        ),
-                      ),
-                    ),
-                  Expanded(
-                    child: ListView(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      children: [
-                        ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            side: BorderSide(
-                              color: _selectedOfficerId == null
-                                  ? const Color(0xFF2563EB)
-                                  : const Color(0xFFE2E8F0),
-                            ),
-                          ),
-                          tileColor: _selectedOfficerId == null
-                              ? const Color(0xFFEFF6FF)
-                              : Colors.white,
-                          leading: CircleAvatar(
-                            backgroundColor: _selectedOfficerId == null
-                                ? const Color(0xFF2563EB)
-                                : const Color(0xFFF1F5F9),
-                            foregroundColor: _selectedOfficerId == null
-                                ? Colors.white
-                                : const Color(0xFF64748B),
-                            radius: 16,
-                            child: const Icon(Icons.all_inclusive, size: 16),
-                          ),
-                          title: const Text(
-                            'All Officers & Subordinates',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: const Text(
-                            'Show entire team (own leads prioritized)',
-                            style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
-                          ),
-                          trailing: _selectedOfficerId == null
-                              ? const Icon(Icons.check_circle, color: Color(0xFF2563EB), size: 18)
-                              : null,
-                          onTap: () {
-                            Navigator.pop(context);
-                            setState(() {
-                              _selectedOfficerId = null;
-                              _selectedOfficerName = null;
-                            });
-                            _fetchLeads();
-                          },
-                        ),
-                        const SizedBox(height: 8),
-                        if (_isLoadingOfficers)
-                          const Padding(
-                            padding: EdgeInsets.all(24.0),
-                            child: Center(
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        else if (filteredOfficers.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(24.0),
-                            child: Center(
-                              child: Text(
-                                'No officers found matching search',
-                                style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
-                              ),
-                            ),
-                          )
-                        else
-                          ...filteredOfficers.map((o) {
-                            final officerId = o['id'] as int;
-                            final officerName = (o['name'] ?? 'Officer').toString();
-                            final officerRole = (o['role'] ?? 'Officer').toString();
-                            final isSelected = _selectedOfficerId == officerId;
-
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 6),
-                              decoration: BoxDecoration(
-                                color: isSelected ? const Color(0xFFEEF2FF) : Colors.white,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: isSelected ? const Color(0xFF4F46E5) : const Color(0xFFE2E8F0),
-                                ),
-                              ),
-                              child: ListTile(
-                                dense: true,
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                                leading: CircleAvatar(
-                                  radius: 15,
-                                  backgroundColor: isSelected
-                                      ? const Color(0xFF4F46E5)
-                                      : const Color(0xFFF1F5F9),
-                                  foregroundColor: isSelected ? Colors.white : const Color(0xFF475569),
-                                  backgroundImage: (officerId == ConfigService.userProfile.id)
-                                      ? ConfigService.userAvatarImageProvider
-                                      : null,
-                                  child: (officerId == ConfigService.userProfile.id &&
-                                          ConfigService.userAvatarImageProvider != null)
-                                      ? null
-                                      : Text(
-                                          officerName.isNotEmpty ? officerName[0].toUpperCase() : '?',
-                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                                        ),
-                                ),
-                                title: Text(
-                                  officerName,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                                    color: const Color(0xFF0F172A),
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  officerRole,
-                                  style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
-                                ),
-                                trailing: isSelected
-                                    ? const Icon(Icons.check_circle, color: Color(0xFF4F46E5), size: 18)
-                                    : null,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  setState(() {
-                                    _selectedOfficerId = officerId;
-                                    _selectedOfficerName = officerName;
-                                  });
-                                  _fetchLeads();
-                                },
-                              ),
-                            );
-                          }),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      );
-    },
-  );
   }
 
   Widget _buildBody() {
@@ -2209,33 +1810,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
                                         fontSize: 10,
                                         fontWeight: FontWeight.bold,
                                         color: Color(0xFF4F46E5),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                            else if (lead.assignedUser.isNotEmpty && lead.assignedUser.toLowerCase() != 'unassigned')
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF1F5F9),
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(Icons.badge_outlined, size: 11, color: Color(0xFF64748B)),
-                                    const SizedBox(width: 3),
-                                    Flexible(
-                                      child: Text(
-                                        lead.assignedUser,
-                                        style: const TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w600,
-                                          color: Color(0xFF475569),
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
                                   ],

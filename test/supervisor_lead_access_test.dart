@@ -181,5 +181,35 @@ void main() {
       expect(assignedIds, isNot(contains(1))); // Super Admin NOT present
       expect(assignedIds, isNot(contains(8))); // Manager NOT present
     });
+
+    test('ApiService.getCreatedLeads defaults to scope=mine ensuring only self leads are requested', () async {
+      await ConfigService.saveAuthData('tok-sup', {
+        'id': 3,
+        'name': 'Priya Patel',
+        'role': 'Supervisor',
+        'team_id': 2,
+      });
+
+      String? requestedScope;
+      final mockClient = MockClient((request) async {
+        requestedScope = request.url.queryParameters['scope'];
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'data': {
+              'leads': [],
+              'pagination': {'total': 0, 'total_pages': 1, 'page': 1, 'limit': 20}
+            }
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      ApiService.setClientForTesting(mockClient);
+
+      await ApiService.getCreatedLeads(page: 1, limit: 20);
+      expect(requestedScope, 'mine', reason: 'Mobile app must request scope=mine by default');
+    });
   });
 }

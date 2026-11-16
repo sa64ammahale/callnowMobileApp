@@ -643,7 +643,7 @@ class ApiService {
     throw Exception(data['message'] ?? data['error']?['message'] ?? 'Failed to create lead');
   }
 
-  /// Fetch created / assigned leads with filters & pagination
+  /// Fetch created / assigned leads with filters & pagination (defaults to self leads only)
   static Future<Map<String, dynamic>> getCreatedLeads({
     int page = 1,
     int limit = 30,
@@ -653,13 +653,14 @@ class ApiService {
     String? period,
     String? dateFrom,
     String? dateTo,
-    String? scope,
+    String? scope = 'mine',
     int? teamId,
     int? userId,
   }) async {
     final queryParams = <String, String>{
       'page': page.toString(),
       'limit': limit.toString(),
+      'scope': (scope != null && scope.isNotEmpty) ? scope : 'mine',
     };
     if (search != null && search.isNotEmpty) queryParams['search'] = search;
     if (status != null && status.isNotEmpty && status != 'all') queryParams['status'] = status;
@@ -667,7 +668,6 @@ class ApiService {
     if (period != null && period.isNotEmpty && period != 'all') queryParams['period'] = period;
     if (dateFrom != null && dateFrom.isNotEmpty) queryParams['date_from'] = dateFrom;
     if (dateTo != null && dateTo.isNotEmpty) queryParams['date_to'] = dateTo;
-    if (scope != null && scope.isNotEmpty) queryParams['scope'] = scope;
     if (teamId != null && teamId > 0) queryParams['team_id'] = teamId.toString();
     if (userId != null && userId > 0) queryParams['user_id'] = userId.toString();
 
