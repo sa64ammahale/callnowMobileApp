@@ -47,6 +47,23 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   bool _isSubmitting = false;
   String? _errorMessage;
 
+  /// Bucket tracking — 15 calls per fill, valid for 15 minutes only.
+  DateTime? _bucketFilledAt;
+  static const Duration _bucketExpiryDuration = Duration(minutes: 15);
+
+  /// True when the current bucket has expired (15 minutes since last fill).
+  bool get _isBucketExpired {
+    if (_bucketFilledAt == null) return true;
+    return DateTime.now().difference(_bucketFilledAt!) >= _bucketExpiryDuration;
+  }
+
+  /// True when there are leads in the queue that haven't been submitted/skipped yet.
+  bool get _hasUncompletedCalls {
+    if (_leads.isEmpty) return false;
+    // Current lead or any remaining leads ahead are uncompleted
+    return _currentIndex < _leads.length;
+  }
+
   // Inactivity tracking
   Timer? _inactivityTimer;
 
@@ -343,6 +360,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           _leads.addAll(freshBatch);
           _currentIndex = 0;
           _isLoading = false;
+          _bucketFilledAt = DateTime.now(); // Mark when this 15-call bucket was filled
           _resetFormForCurrentLead();
         });
       }
@@ -357,79 +375,86 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   }
 
   Future<void> _refreshBatch() async {
-    // If no lead is currently active (e.g. empty queue or initial error), load fresh batch
-    if (_currentLead == null) {
+    // Queue empty — fill with a fresh bucket of 15
+    if (_leads.isEmpty) {
       await _loadInitialBatch(force: true);
       return;
     }
 
+    // If bucket hasn't expired and there are uncompleted calls, block the refresh
+    if (!_isBucketExpired && _hasUncompletedCalls) {
+      if (mounted) {
+        final remainingMinutes =
+            (_bucketExpiryDuration.inSeconds -
+                    DateTime.now().difference(_bucketFilledAt!).inSeconds)
+                .clamp(0, _bucketExpiryDuration.inSeconds) ~/
+            60;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Complete your current calls before refreshing. '
+                    'Bucket expires in ~$remainingMinutes min.',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: const Color(0xFFF59E0B),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Bucket expired — clear completed queue and refill with a fresh bucket of 15
     try {
       final batch = await ApiService.getBatchLeads(limit: 15);
 
-      final existingIdentifiers = <String>{};
-      for (final l in _leads) {
-        final id = CallingDeskScreen.getLeadIdentifier(l);
-        if (id.isNotEmpty) existingIdentifiers.add(id);
-      }
-
-      final newLeads = batch.where((lead) {
-        final id = CallingDeskScreen.getLeadIdentifier(lead);
-        if (id.isEmpty) return true;
-        return !CallingDeskScreen._sessionProcessedLeadIds.contains(id) &&
-            !existingIdentifiers.contains(id);
+      final freshBatch = batch.where((item) {
+        final id = CallingDeskScreen.getLeadIdentifier(item);
+        return id.isEmpty || !CallingDeskScreen._sessionProcessedLeadIds.contains(id);
       }).toList();
 
       if (mounted) {
-        if (newLeads.isNotEmpty) {
-          setState(() {
-            _leads.addAll(newLeads);
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.check_circle_outline, color: Colors.white, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '${newLeads.length} new contact${newLeads.length > 1 ? 's' : ''} added to queue. Current call preserved.',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
+        setState(() {
+          _leads.clear();
+          _leads.addAll(freshBatch);
+          _currentIndex = 0;
+          _bucketFilledAt = DateTime.now(); // New bucket fill time
+          _resetFormForCurrentLead();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.refresh, color: Colors.white, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'New bucket of 15 calls loaded (valid for 15 minutes).',
+                    style: TextStyle(fontWeight: FontWeight.w600),
                   ),
-                ],
-              ),
-              backgroundColor: const Color(0xFF0F766E),
-              behavior: SnackBarBehavior.floating,
-              duration: const Duration(seconds: 3),
+                ),
+              ],
             ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Row(
-                children: [
-                  Icon(Icons.info_outline, color: Colors.white, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Queue is up to date. Current call preserved.',
-                      style: TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ],
-              ),
-              backgroundColor: Color(0xFF334155),
-              behavior: SnackBarBehavior.floating,
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
+            backgroundColor: Color(0xFF0F766E),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 3),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to check for new contacts: ${e.toString().replaceAll('Exception: ', '')}'),
+            content: Text('Failed to refresh batch: ${e.toString().replaceAll('Exception: ', '')}'),
             backgroundColor: Colors.red.shade700,
             behavior: SnackBarBehavior.floating,
           ),
@@ -1488,6 +1513,11 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
 
     final lead = _currentLead;
     if (lead == null) {
+      // Determine whether we can refill now or must wait for bucket expiry
+      final canRefill = _isBucketExpired || _leads.isEmpty;
+      final waitText = _bucketFilledAt != null && !_isBucketExpired
+          ? 'Bucket expires in ~${((_bucketExpiryDuration.inSeconds - DateTime.now().difference(_bucketFilledAt!).inSeconds).clamp(0, _bucketExpiryDuration.inSeconds) ~/ 60)} min.'
+          : '';
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
@@ -1508,14 +1538,23 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'You have completed all contacts in the current batch. Tap below to fetch the next batch from the server.',
+              if (waitText.isNotEmpty)
+                Text(
+                  waitText,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Color(0xFF9A3412), fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+              if (waitText.isNotEmpty) const SizedBox(height: 8),
+              Text(
+                canRefill
+                    ? 'Tap below to fetch the next batch of 15 calls.'
+                    : 'Wait for the bucket to expire before fetching new calls.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Color(0xFF64748B)),
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
-                onPressed: _loadInitialBatch,
+                onPressed: canRefill ? _loadInitialBatch : null,
                 icon: const Icon(Icons.download_rounded),
                 label: const Text('Fetch Next Contacts Batch'),
               ),

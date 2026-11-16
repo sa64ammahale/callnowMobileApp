@@ -1,4 +1,5 @@
 import 'package:callnow_new/constants/lead_stages.dart';
+import 'package:callnow_new/services/config_service.dart';
 
 class CrmLead {
   static final RegExp _nonDigitRegex = RegExp(r'\D');
@@ -118,7 +119,12 @@ class CrmLead {
       assignedUserId: int.tryParse(json['assigned_user_id']?.toString() ?? json['assigned_to']?.toString() ?? '0'),
       teamId: int.tryParse(json['team_id']?.toString() ?? '0'),
       teamName: json['team_name']?.toString(),
-      isOwnLead: json['is_own_lead'] == true || json['is_own_lead'] == 1 || json['is_own_lead'] == '1',
+      isOwnLead: json['is_own_lead'] == true ||
+          json['is_own_lead'] == 1 ||
+          json['is_own_lead'] == '1' ||
+          ((int.tryParse(json['assigned_user_id']?.toString() ?? json['assigned_to']?.toString() ?? '0') ?? 0) > 0 &&
+              (int.tryParse(json['assigned_user_id']?.toString() ?? json['assigned_to']?.toString() ?? '0') ?? 0) ==
+                  ConfigService.userProfile.id),
       source: json['source']?.toString(),
       uploadTime: json['upload_time']?.toString() ?? json['created_at']?.toString(),
       callCount: int.tryParse(json['call_count']?.toString() ?? '0') ?? 0,

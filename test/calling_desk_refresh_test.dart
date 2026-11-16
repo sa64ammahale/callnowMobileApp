@@ -61,7 +61,7 @@ void main() {
   });
 
   group('CallingDeskScreen Refresh & Preservation Widget Tests', () {
-    testWidgets('Preserve active lead and notes on refresh while appending new leads', (tester) async {
+    testWidgets('Preserve active lead and block refresh when calls uncompleted', (tester) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {
@@ -132,7 +132,8 @@ void main() {
       await tester.pump();
       expect(state.notesController.text, equals('Discussed product pricing and discount'));
 
-      // Trigger refresh
+      // Trigger refresh while Alice (current lead) is still uncompleted
+      // Bucket hasn't expired (just filled), so refresh should be BLOCKED
       await state.refreshBatchForTesting();
       await tester.pumpAndSettle();
 
@@ -141,14 +142,16 @@ void main() {
       expect(state.currentIndex, equals(0));
       expect(state.notesController.text, equals('Discussed product pricing and discount'));
 
-      // Verify queue was updated: Lead 3 added, Lead 1 not duplicated
-      expect(state.leads.length, equals(3));
+      // Verify queue was NOT appended — still 2 leads, no Charlie
+      expect(state.leads.length, equals(2));
       expect(state.leads[0]['id'], equals('1'));
       expect(state.leads[1]['id'], equals('2'));
-      expect(state.leads[2]['id'], equals('3'));
 
-      // Verify SnackBar notified the user
-      expect(find.text('1 new contact added to queue. Current call preserved.'), findsOneWidget);
+      // Verify SnackBar notified the user that refresh is blocked
+      expect(find.textContaining('Complete your current calls before refreshing'), findsOneWidget);
+
+      // Verify API was NOT called again (refresh was blocked)
+      expect(apiCallCount, equals(1));
     });
 
     testWidgets('Skipping with notes prompts confirmation dialog and marks lead processed', (tester) async {

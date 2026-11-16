@@ -34,10 +34,19 @@ class _LeadsScreenState extends State<LeadsScreen> {
   bool _hasMoreLeads = false;
   bool _isLoadingMoreLeads = false;
 
+  // Subordinate officer filtering for Super Admin, Admin, and Supervisor
+  int? _selectedOfficerId;
+  String? _selectedOfficerName;
+  List<Map<String, dynamic>> _officers = [];
+  bool _isLoadingOfficers = false;
+
   @override
   void initState() {
     super.initState();
     _fetchLeads();
+    if (ConfigService.isManagementOrSupervisor) {
+      _loadOfficers();
+    }
     _searchController.addListener(_applyFilters);
   }
 
@@ -47,6 +56,69 @@ class _LeadsScreenState extends State<LeadsScreen> {
     super.dispose();
   }
 
+  Future<void> _loadOfficers() async {
+    if (!ConfigService.isManagementOrSupervisor) return;
+    setState(() => _isLoadingOfficers = true);
+    try {
+      final res = await ApiService.getTeamOfficers();
+      final rawOfficers = res['officers'];
+      List<Map<String, dynamic>> loadedOfficers = [];
+      if (rawOfficers is List) {
+        for (final item in rawOfficers) {
+          if (item is Map) {
+            final id = int.tryParse(item['id']?.toString() ?? item['user_id']?.toString() ?? '0') ?? 0;
+            final name = (item['name'] ?? item['user_name'] ?? item['username'] ?? '').toString().trim();
+            final role = (item['role'] ?? item['designation'] ?? 'Officer').toString().trim();
+            if (id > 0 && name.isNotEmpty) {
+              loadedOfficers.add({
+                'id': id,
+                'name': name,
+                'role': role,
+              });
+            }
+          }
+        }
+      }
+
+      _mergeOfficersFromLeads(loadedOfficers);
+
+      if (mounted) {
+        setState(() {
+          _officers = loadedOfficers;
+          _isLoadingOfficers = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[LeadsScreen] Error loading officers: $e');
+      if (mounted) {
+        List<Map<String, dynamic>> fallback = [];
+        _mergeOfficersFromLeads(fallback);
+        setState(() {
+          _officers = fallback;
+          _isLoadingOfficers = false;
+        });
+      }
+    }
+  }
+
+  void _mergeOfficersFromLeads(List<Map<String, dynamic>> target) {
+    for (final lead in _allLeads) {
+      if (lead.assignedUserId != null &&
+          lead.assignedUserId! > 0 &&
+          lead.assignedUser.isNotEmpty &&
+          lead.assignedUser.toLowerCase() != 'unassigned') {
+        final alreadyPresent = target.any((o) => o['id'] == lead.assignedUserId);
+        if (!alreadyPresent) {
+          target.add({
+            'id': lead.assignedUserId!,
+            'name': lead.assignedUser,
+            'role': 'Officer',
+          });
+        }
+      }
+    }
+  }
+
   Future<void> _fetchLeads() async {
     setState(() {
       _isLoading = true;
@@ -54,7 +126,12 @@ class _LeadsScreenState extends State<LeadsScreen> {
     });
 
     try {
-      final res = await ApiService.getCreatedLeads(page: 1, limit: 20, source: 'all');
+      final res = await ApiService.getCreatedLeads(
+        page: 1,
+        limit: 20,
+        source: 'all',
+        userId: _selectedOfficerId,
+      );
       debugPrint('[LeadsScreen] getCreatedLeads RAW RESPONSE: $res');
       final raw = res['leads'];
       final pagObj = res['pagination'];
@@ -78,6 +155,9 @@ class _LeadsScreenState extends State<LeadsScreen> {
           _hasMoreLeads = _currentPage < _totalPages;
           _isLoading = false;
         });
+        if (ConfigService.isManagementOrSupervisor) {
+          _mergeOfficersFromLeads(_officers);
+        }
         _applyFilters();
       }
     } catch (e) {
@@ -100,6 +180,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
         page: nextPage,
         limit: 30,
         source: 'all',
+        userId: _selectedOfficerId,
       );
       final raw = res['leads'];
       final pagObj = res['pagination'];
@@ -123,6 +204,9 @@ class _LeadsScreenState extends State<LeadsScreen> {
           _hasMoreLeads = _currentPage < _totalPages;
           _isLoadingMoreLeads = false;
         });
+        if (ConfigService.isManagementOrSupervisor) {
+          _mergeOfficersFromLeads(_officers);
+        }
         _applyFilters();
       }
     } catch (e) {
@@ -137,21 +221,38 @@ class _LeadsScreenState extends State<LeadsScreen> {
 
   void _applyFilters() {
     final query = _searchController.text.trim().toLowerCase();
+    final currentUserId = ConfigService.userProfile.id;
+    final isSupervisor = ConfigService.isManagementOrSupervisor;
+
     setState(() {
-      _filteredLeads = _allLeads.where((lead) {
+      var filtered = _allLeads.where((lead) {
         final matchesSearch = query.isEmpty ||
             lead.name.toLowerCase().contains(query) ||
             lead.mobile.contains(query) ||
             lead.company.toLowerCase().contains(query) ||
             lead.loanType.toLowerCase().contains(query) ||
             (lead.loginBank ?? '').toLowerCase().contains(query) ||
-            lead.otherInfo.toLowerCase().contains(query);
+            lead.otherInfo.toLowerCase().contains(query) ||
+            lead.assignedUser.toLowerCase().contains(query);
 
         if (!matchesSearch) return false;
 
         if (_activeStageFilter == 'ALL') return true;
         return lead.status == _activeStageFilter;
       }).toList();
+
+      // For higher-level users (Super Admin, Admin, Supervisor), prioritize own leads at the top
+      if (isSupervisor) {
+        filtered.sort((a, b) {
+          final aIsOwn = a.isOwnLead || (currentUserId > 0 && a.assignedUserId == currentUserId);
+          final bIsOwn = b.isOwnLead || (currentUserId > 0 && b.assignedUserId == currentUserId);
+          if (aIsOwn && !bIsOwn) return -1;
+          if (!aIsOwn && bIsOwn) return 1;
+          return 0; // preserve fetched chronological order
+        });
+      }
+
+      _filteredLeads = filtered;
     });
   }
 
@@ -1144,6 +1245,10 @@ class _LeadsScreenState extends State<LeadsScreen> {
               ),
             ),
 
+            // Subordinate Officer Filter Pill Bar (Super Admin, Admin, Supervisor only)
+            if (ConfigService.isManagementOrSupervisor)
+              _buildOfficerFilterBar(),
+
             // Lead List
             Expanded(
               child: _buildBody(),
@@ -1226,6 +1331,306 @@ class _LeadsScreenState extends State<LeadsScreen> {
     );
   }
 
+  Widget _buildOfficerFilterBar() {
+    final isFiltered = _selectedOfficerId != null;
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+      child: Row(
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: _showOfficerSelectionSheet,
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: isFiltered ? const Color(0xFFEEF2FF) : const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isFiltered ? const Color(0xFF4F46E5) : const Color(0xFFE2E8F0),
+                    width: isFiltered ? 1.3 : 1.0,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.badge_outlined,
+                      size: 14,
+                      color: isFiltered ? const Color(0xFF4F46E5) : const Color(0xFF64748B),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      isFiltered ? 'Officer: $_selectedOfficerName' : 'Filter by Officer',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: isFiltered ? FontWeight.bold : FontWeight.w500,
+                        color: isFiltered ? const Color(0xFF4F46E5) : const Color(0xFF475569),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    if (isFiltered)
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _selectedOfficerId = null;
+                            _selectedOfficerName = null;
+                          });
+                          _fetchLeads();
+                        },
+                        child: const Padding(
+                          padding: EdgeInsets.only(left: 2),
+                          child: Icon(Icons.cancel, size: 14, color: Color(0xFF4F46E5)),
+                        ),
+                      )
+                    else
+                      const Icon(Icons.arrow_drop_down, size: 16, color: Color(0xFF64748B)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              isFiltered
+                  ? 'Showing ${_filteredLeads.length} leads'
+                  : '⭐ Own leads prioritized',
+              textAlign: TextAlign.end,
+              style: const TextStyle(
+                fontSize: 11,
+                color: Color(0xFF64748B),
+                fontWeight: FontWeight.w500,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showOfficerSelectionSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        String officerSearch = '';
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final filteredOfficers = _officers.where((o) {
+              final name = (o['name'] ?? '').toString().toLowerCase();
+              final role = (o['role'] ?? '').toString().toLowerCase();
+              return officerSearch.isEmpty ||
+                  name.contains(officerSearch.toLowerCase()) ||
+                  role.contains(officerSearch.toLowerCase());
+            }).toList();
+
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.65,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Column(
+                children: [
+                  Center(
+                    child: Container(
+                      margin: const EdgeInsets.only(top: 10, bottom: 8),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFCBD5E1),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.people_outline, color: Color(0xFF2563EB), size: 20),
+                            SizedBox(width: 8),
+                            Text(
+                              'Filter by Officer / User',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                          ],
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, size: 20),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+                    child: SizedBox(
+                      height: 38,
+                      child: TextField(
+                        decoration: InputDecoration(
+                          hintText: 'Search officer by name or role...',
+                          hintStyle: const TextStyle(fontSize: 12),
+                          prefixIcon: const Icon(Icons.search, size: 16),
+                          contentPadding: EdgeInsets.zero,
+                          filled: true,
+                          fillColor: const Color(0xFFF1F5F9),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                        onChanged: (val) {
+                          setSheetState(() => officerSearch = val.trim());
+                        },
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      children: [
+                        ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            side: BorderSide(
+                              color: _selectedOfficerId == null
+                                  ? const Color(0xFF2563EB)
+                                  : const Color(0xFFE2E8F0),
+                            ),
+                          ),
+                          tileColor: _selectedOfficerId == null
+                              ? const Color(0xFFEFF6FF)
+                              : Colors.white,
+                          leading: CircleAvatar(
+                            backgroundColor: _selectedOfficerId == null
+                                ? const Color(0xFF2563EB)
+                                : const Color(0xFFF1F5F9),
+                            foregroundColor: _selectedOfficerId == null
+                                ? Colors.white
+                                : const Color(0xFF64748B),
+                            radius: 16,
+                            child: const Icon(Icons.all_inclusive, size: 16),
+                          ),
+                          title: const Text(
+                            'All Officers & Subordinates',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: const Text(
+                            'Show entire team (own leads prioritized)',
+                            style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                          ),
+                          trailing: _selectedOfficerId == null
+                              ? const Icon(Icons.check_circle, color: Color(0xFF2563EB), size: 18)
+                              : null,
+                          onTap: () {
+                            Navigator.pop(context);
+                            setState(() {
+                              _selectedOfficerId = null;
+                              _selectedOfficerName = null;
+                            });
+                            _fetchLeads();
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        if (_isLoadingOfficers)
+                          const Padding(
+                            padding: EdgeInsets.all(24.0),
+                            child: Center(
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        else if (filteredOfficers.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.all(24.0),
+                            child: Center(
+                              child: Text(
+                                'No officers found matching search',
+                                style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                              ),
+                            ),
+                          )
+                        else
+                          ...filteredOfficers.map((o) {
+                            final officerId = o['id'] as int;
+                            final officerName = (o['name'] ?? 'Officer').toString();
+                            final officerRole = (o['role'] ?? 'Officer').toString();
+                            final isSelected = _selectedOfficerId == officerId;
+
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 6),
+                              decoration: BoxDecoration(
+                                color: isSelected ? const Color(0xFFEEF2FF) : Colors.white,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: isSelected ? const Color(0xFF4F46E5) : const Color(0xFFE2E8F0),
+                                ),
+                              ),
+                              child: ListTile(
+                                dense: true,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                                leading: CircleAvatar(
+                                  radius: 15,
+                                  backgroundColor: isSelected
+                                      ? const Color(0xFF4F46E5)
+                                      : const Color(0xFFF1F5F9),
+                                  foregroundColor: isSelected ? Colors.white : const Color(0xFF475569),
+                                  child: Text(
+                                    officerName.isNotEmpty ? officerName[0].toUpperCase() : '?',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                                  ),
+                                ),
+                                title: Text(
+                                  officerName,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                                    color: const Color(0xFF0F172A),
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  officerRole,
+                                  style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+                                ),
+                                trailing: isSelected
+                                    ? const Icon(Icons.check_circle, color: Color(0xFF4F46E5), size: 18)
+                                    : null,
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  setState(() {
+                                    _selectedOfficerId = officerId;
+                                    _selectedOfficerName = officerName;
+                                  });
+                                  _fetchLeads();
+                                },
+                              ),
+                            );
+                          }),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildBody() {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -1303,21 +1708,28 @@ class _LeadsScreenState extends State<LeadsScreen> {
                           'All leads loaded',
                           style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
                         )
-                      : Tooltip(
-                          message: filterOrSearchActive
-                              ? 'Search and stage filters are applied client-side on the already-fetched batch. Clear filters to load more from the server.'
-                              : null,
-                          child: OutlinedButton.icon(
-                            onPressed: filterOrSearchActive ? null : _loadMoreLeads,
-                            icon: const Icon(Icons.arrow_downward, size: 18),
-                            label: Text(
-                              'Load More Leads (${_totalLeadsCount - _allLeads.length} remaining)',
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            ),
-                          ),
+                      : Builder(
+                          builder: (context) {
+                            final loadMoreBtn = OutlinedButton.icon(
+                              onPressed: filterOrSearchActive ? null : _loadMoreLeads,
+                              icon: const Icon(Icons.arrow_downward, size: 18),
+                              label: Text(
+                                'Load More Leads (${_totalLeadsCount - _allLeads.length} remaining)',
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                            );
+                            if (filterOrSearchActive) {
+                              return Tooltip(
+                                message:
+                                    'Search and stage filters are applied client-side on the already-fetched batch. Clear filters to load more from the server.',
+                                child: loadMoreBtn,
+                              );
+                            }
+                            return loadMoreBtn;
+                          },
                         ),
             ),
           );
@@ -1470,6 +1882,60 @@ class _LeadsScreenState extends State<LeadsScreen> {
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
+                          if (ConfigService.isManagementOrSupervisor) ...[
+                            const SizedBox(height: 4),
+                            if (lead.isOwnLead || (ConfigService.userProfile.id > 0 && lead.assignedUserId == ConfigService.userProfile.id))
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFEEF2FF),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: const Color(0xFFC7D2FE)),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.star, size: 11, color: Color(0xFF4F46E5)),
+                                    SizedBox(width: 3),
+                                    Text(
+                                      'My Lead',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF4F46E5),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else if (lead.assignedUser.isNotEmpty && lead.assignedUser.toLowerCase() != 'unassigned')
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF1F5F9),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.badge_outlined, size: 11, color: Color(0xFF64748B)),
+                                    const SizedBox(width: 3),
+                                    Flexible(
+                                      child: Text(
+                                        lead.assignedUser,
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF475569),
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
                         ],
                       ),
                     ),
