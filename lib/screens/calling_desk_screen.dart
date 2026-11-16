@@ -126,9 +126,18 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     },
   ];
 
+  static const Map<String, dynamic> _voicemailOption = {
+    'id': 'IVR_VOICEMAIL',
+    'label': 'IVR / Voicemail',
+    'serverStatus': 'IVR / Voicemail',
+    'icon': Icons.voicemail_rounded,
+    'color': Colors.deepPurple,
+  };
+
   List<Map<String, dynamic>> get _allDispositionOptions => [
         ..._connectedOptions,
         ..._unconnectedOptions,
+        _voicemailOption,
       ];
 
   final List<String> _quickRemarks = [
@@ -172,6 +181,13 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       _showOutcomes = log != null;
       if (log != null) {
         _durationSeconds = log.durationSeconds;
+        if (log.durationSeconds == 0) {
+          _selectedDisposition = 'RINGING';
+        } else if (log.isVoicemailLikely) {
+          _selectedDisposition = '';
+        } else {
+          _selectedDisposition = 'NOT_INTERESTED';
+        }
       }
     });
   }
@@ -242,6 +258,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
 
             if (verified.durationSeconds == 0) {
               _selectedDisposition = 'RINGING';
+              _allowUnconnectedOverrideForShortCalls = false;
+            } else if (verified.isVoicemailLikely) {
+              _selectedDisposition = '';
               _allowUnconnectedOverrideForShortCalls = false;
             } else {
               _selectedDisposition = 'NOT_INTERESTED';
@@ -497,9 +516,16 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
 
     if (mounted) {
       final bool isConnected = _durationSeconds > 0;
+      final bool isShort = _durationSeconds > 0 && _durationSeconds <= 18;
       setState(() {
         _showOutcomes = true;
-        _selectedDisposition = isConnected ? 'NOT_INTERESTED' : 'RINGING';
+        if (!isConnected) {
+          _selectedDisposition = 'RINGING';
+        } else if (isShort) {
+          _selectedDisposition = '';
+        } else {
+          _selectedDisposition = 'NOT_INTERESTED';
+        }
       });
 
       // Bottom floating pill toast — compact, no overflow
@@ -534,25 +560,35 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                 Container(
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color: isConnected
-                        ? const Color(0xFFDCFCE7)
-                        : const Color(0xFFFFEDD5),
+                    color: !isConnected
+                        ? const Color(0xFFFFEDD5)
+                        : (isShort
+                            ? const Color(0xFFFEF3C7)
+                            : const Color(0xFFDCFCE7)),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
-                    isConnected
-                        ? Icons.call_made_rounded
-                        : Icons.phone_missed_rounded,
+                    !isConnected
+                        ? Icons.phone_missed_rounded
+                        : (isShort
+                            ? Icons.phone_in_talk_rounded
+                            : Icons.call_made_rounded),
                     size: 13,
-                    color: isConnected
-                        ? const Color(0xFF16A34A)
-                        : const Color(0xFFEA580C),
+                    color: !isConnected
+                        ? const Color(0xFFEA580C)
+                        : (isShort
+                            ? const Color(0xFFD97706)
+                            : const Color(0xFF16A34A)),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
-                    isConnected ? '✓ Connected' : '✗ Not Connected',
+                    !isConnected
+                        ? '✗ Not Connected'
+                        : (isShort
+                            ? '📞 Short Call (${_durationSeconds}s)'
+                            : '✓ Connected'),
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
@@ -770,6 +806,29 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     final lead = _currentLead;
     if (lead == null) return;
 
+    if (_selectedDisposition.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Please select a call outcome before saving.',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.red.shade800,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
     final wasInterested = _selectedDisposition == 'ENQUIRY_INTERESTED';
     final currentLeadSnapshot = Map<String, dynamic>.from(lead);
     final currentRemarksSnapshot = _notesController.text.trim();
@@ -846,9 +905,11 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       }
     }
 
-    final effectiveTiming = isConnectedOutcome
-        ? (verifiedDur > 20 ? 'CONNECTED_CONVERSATION' : 'CONNECTED_SHORT')
-        : 'NOT_CONNECTED';
+    final effectiveTiming = _selectedDisposition == 'IVR_VOICEMAIL'
+        ? 'VOICEMAIL'
+        : (isConnectedOutcome
+            ? (verifiedDur > 20 ? 'CONNECTED_CONVERSATION' : 'CONNECTED_SHORT')
+            : 'NOT_CONNECTED');
 
     // Auto-schedule callback 2 hours later if CallBack/Busy was selected without explicit preset
     if (_selectedDisposition == 'CALLBACK_BUSY' && _followupDateTime == null) {
@@ -1824,10 +1885,40 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     );
   }
 
-  /// 4. Structured Call Disposition & Outcome Card (2x2 Radio Grid matching screenshot)
+  /// 4. Structured Call Disposition & Outcome Card (2x2 Radio Grid + Voicemail matching screenshot)
   Widget _buildDispositionCard() {
-    final isConnectedOutcomes = _isCallConnected && !_allowUnconnectedOverrideForShortCalls;
+    final bool isConnected = _durationSeconds > 0;
+    final bool isShort = _durationSeconds > 0 && _durationSeconds <= 18;
+    final isConnectedOutcomes = isConnected && !_allowUnconnectedOverrideForShortCalls;
     final options = isConnectedOutcomes ? _connectedOptions : _unconnectedOptions;
+
+    // Header badge styling & text
+    Color badgeBg;
+    Color badgeFg;
+    IconData badgeIcon;
+    String badgeText;
+
+    if (!isConnected) {
+      badgeBg = const Color(0xFFFFEDD5);
+      badgeFg = const Color(0xFFEA580C);
+      badgeIcon = Icons.phone_missed_rounded;
+      badgeText = '✗ Not Connected';
+    } else if (_selectedDisposition == 'IVR_VOICEMAIL') {
+      badgeBg = const Color(0xFFF3E8FF);
+      badgeFg = const Color(0xFF7E22CE);
+      badgeIcon = Icons.voicemail_rounded;
+      badgeText = '✗ Not Connected (Voicemail)';
+    } else if (isShort && _selectedDisposition.isEmpty) {
+      badgeBg = const Color(0xFFFEF3C7);
+      badgeFg = const Color(0xFFD97706);
+      badgeIcon = Icons.phone_in_talk_rounded;
+      badgeText = '📞 Short Call (${_durationSeconds}s) • Choose Outcome';
+    } else {
+      badgeBg = const Color(0xFFDCFCE7);
+      badgeFg = const Color(0xFF16A34A);
+      badgeIcon = Icons.call_made_rounded;
+      badgeText = '✓ Connected (${_durationSeconds}s)';
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -1845,7 +1936,58 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Status Pill Header
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: badgeBg,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(badgeIcon, size: 13, color: badgeFg),
+                    const SizedBox(width: 6),
+                    Text(
+                      badgeText,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: badgeFg,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isShort)
+                InkWell(
+                  onTap: () {
+                    setState(() {
+                      _allowUnconnectedOverrideForShortCalls = !_allowUnconnectedOverrideForShortCalls;
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Text(
+                      _allowUnconnectedOverrideForShortCalls ? 'Show Connected' : 'Show Unconnected',
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        color: Color(0xFF2563EB),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
           // Row 1 (Col 1 & Col 2)
           Row(
             children: [
@@ -1883,6 +2025,15 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          const Divider(height: 1, color: Color(0xFFE2E8F0)),
+          const SizedBox(height: 10),
+          // Dedicated IVR / Voicemail Option (Always accessible)
+          _buildRadioOutcomeItem(
+            id: _voicemailOption['id'] as String,
+            label: _voicemailOption['label'] as String,
+            activeColor: Colors.deepPurple,
+          ),
         ],
       ),
     );
@@ -1891,8 +2042,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   Widget _buildRadioOutcomeItem({
     required String id,
     required String label,
+    Color? activeColor,
   }) {
     final isSelected = _selectedDisposition == id;
+    final primaryColor = activeColor ?? const Color(0xFF26C6DA);
 
     return InkWell(
       onTap: () {
@@ -1916,7 +2069,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: isSelected ? const Color(0xFF26C6DA) : const Color(0xFF94A3B8),
+                  color: isSelected ? primaryColor : const Color(0xFF94A3B8),
                   width: isSelected ? 2.2 : 1.8,
                 ),
               ),
@@ -1925,9 +2078,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                       child: Container(
                         width: 9,
                         height: 9,
-                        decoration: const BoxDecoration(
+                        decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: Color(0xFF26C6DA), // Cyan dot matching screenshot
+                          color: primaryColor,
                         ),
                       ),
                     )

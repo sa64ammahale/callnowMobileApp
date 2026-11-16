@@ -83,7 +83,7 @@ class CallSessionEvent {
       case 'CONNECTED_SHORT':
         return 'Connected (Short Call)';
       case 'VOICEMAIL':
-        return 'Voicemail / Automated Machine';
+        return 'IVR / Voicemail';
       case 'NOT_CONNECTED':
       default:
         return 'Not Connected / Missed';

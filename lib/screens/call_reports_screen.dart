@@ -775,11 +775,13 @@ class CallReportsScreenState extends State<CallReportsScreen>
     final notConnected = int.tryParse((tiers['not_connected'] ?? tiers['notConnected'])?.toString() ?? '0') ?? 0;
     final shortCalls = int.tryParse((tiers['connected_short'] ?? tiers['short_call'])?.toString() ?? '0') ?? 0;
     final conversations = int.tryParse((tiers['connected_conversation'] ?? tiers['conversation'])?.toString() ?? '0') ?? 0;
-    final total = notConnected + shortCalls + conversations;
+    final voicemails = int.tryParse((tiers['voicemail'] ?? tiers['ivr_voicemail'])?.toString() ?? '0') ?? 0;
+    final total = notConnected + shortCalls + conversations + voicemails;
 
     final double convoPct = total > 0 ? (conversations / total) * 100 : 0.0;
     final double shortPct = total > 0 ? (shortCalls / total) * 100 : 0.0;
     final double notConnPct = total > 0 ? (notConnected / total) * 100 : 0.0;
+    final double vmPct = total > 0 ? (voicemails / total) * 100 : 0.0;
 
     return Card(
       elevation: 2,
@@ -824,6 +826,11 @@ class CallReportsScreenState extends State<CallReportsScreen>
                             Expanded(
                               flex: shortCalls,
                               child: Container(color: Colors.amber.shade600),
+                            ),
+                          if (voicemails > 0)
+                            Expanded(
+                              flex: voicemails,
+                              child: Container(color: Colors.deepPurple.shade400),
                             ),
                           if (notConnected > 0)
                             Expanded(
@@ -1168,6 +1175,12 @@ class CallReportsScreenState extends State<CallReportsScreen>
         fg = Colors.amber.shade900;
         label = '${seconds}s • Short';
         icon = Icons.timer;
+        break;
+      case 'VOICEMAIL':
+        bg = Colors.deepPurple.withValues(alpha: 0.15);
+        fg = Colors.deepPurple.shade900;
+        label = '${seconds}s • Voicemail';
+        icon = Icons.voicemail_rounded;
         break;
       case 'NOT_CONNECTED':
       default:

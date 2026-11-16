@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/screens/calling_desk_screen.dart';
+import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/config_service.dart';
@@ -371,6 +372,200 @@ void main() {
       // Fresh Lead 51 should be shown; Old Lead 50 should be filtered out
       expect(find.text('Fresh Lead'), findsOneWidget);
       expect(find.text('Old Lead'), findsNothing);
+    });
+  });
+
+  group('IVR / Voicemail Tracking & Outcome Selection Tests', () {
+    test('timingTierLabel maps VOICEMAIL to IVR / Voicemail', () {
+      final session = CallSessionEvent(
+        number: '9876543210',
+        durationSeconds: 12,
+        timingClassification: 'VOICEMAIL',
+        startTime: DateTime.now().subtract(const Duration(seconds: 12)),
+        endTime: DateTime.now(),
+      );
+      expect(session.timingTierLabel, 'IVR / Voicemail');
+      expect(session.durationFormatted, '12s');
+    });
+
+    test('VerifiedCallLog isVoicemailLikely detects calls between 1s and 18s', () {
+      final log0 = VerifiedCallLog(isDialed: true, number: '123', durationSeconds: 0, timestamp: 0, type: 2);
+      final log12 = VerifiedCallLog(isDialed: true, number: '123', durationSeconds: 12, timestamp: 0, type: 2);
+      final log18 = VerifiedCallLog(isDialed: true, number: '123', durationSeconds: 18, timestamp: 0, type: 2);
+      final log35 = VerifiedCallLog(isDialed: true, number: '123', durationSeconds: 35, timestamp: 0, type: 2);
+
+      expect(log0.isVoicemailLikely, isFalse);
+      expect(log12.isVoicemailLikely, isTrue);
+      expect(log18.isVoicemailLikely, isTrue);
+      expect(log35.isVoicemailLikely, isFalse);
+    });
+
+    testWidgets('Short calls (1-18s) require explicit selection; submitting IVR/Voicemail sends timing_classification VOICEMAIL', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      Map<String, dynamic>? submittedBody;
+      final mockClient = MockClient((request) async {
+        if (request.url.path.contains('/telecaller/batch-leads')) {
+          return http.Response(
+            json.encode({
+              'success': true,
+              'data': {
+                'leads': [
+                  {'id': '77', 'name': 'Voicemail Test Lead', 'mobile': '9898989898', 'source': 'MAIN'},
+                ]
+              }
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        if (request.url.path.contains('/telecaller/calls/77/complete')) {
+          submittedBody = json.decode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            json.encode({
+              'success': true,
+              'data': {'id': 77, 'status': 'completed'},
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(json.encode({'success': true, 'data': {}}), 200);
+      });
+
+      ApiService.setClientForTesting(mockClient);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: CallingDeskScreen(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final state = tester.state<CallingDeskScreenState>(find.byType(CallingDeskScreen));
+
+      // 1. Simulate verified short call (8s - likely voicemail greeting)
+      state.setVerifiedCallLogForTesting(
+        VerifiedCallLog(
+          isDialed: true,
+          number: '9898989898',
+          durationSeconds: 8,
+          timestamp: DateTime.now().millisecondsSinceEpoch,
+          type: 2,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Ensure no disposition is auto-selected
+      expect(state.selectedDisposition, isEmpty);
+      expect(find.text('📞 Short Call (8s) • Choose Outcome'), findsOneWidget);
+      expect(find.text('IVR / Voicemail'), findsOneWidget);
+
+      // 2. Try to save without selecting an outcome -> validation snackbar triggers
+      final saveBtn = find.text('Save & Next');
+      await tester.ensureVisible(saveBtn);
+      await tester.tap(saveBtn);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Please select a call outcome before saving.'), findsOneWidget);
+      expect(submittedBody, isNull); // Blocked from submitting
+
+      // 3. Select 'IVR / Voicemail'
+      final vmRadio = find.text('IVR / Voicemail');
+      await tester.ensureVisible(vmRadio);
+      await tester.tap(vmRadio);
+      await tester.pumpAndSettle();
+
+      expect(state.selectedDisposition, 'IVR_VOICEMAIL');
+      expect(find.text('✗ Not Connected (Voicemail)'), findsOneWidget);
+
+      // 4. Submit with IVR / Voicemail
+      await tester.ensureVisible(saveBtn);
+      await tester.tap(saveBtn);
+      await tester.pumpAndSettle();
+
+      // Verify payload sent to backend
+      expect(submittedBody, isNotNull);
+      expect(submittedBody!['call_status'], 'IVR / Voicemail');
+      expect(submittedBody!['timing_classification'], 'VOICEMAIL');
+      expect(submittedBody!['call_duration'], 8);
+    });
+
+    testWidgets('CallReportsScreen displays Voicemail badge for calls with timing_classification VOICEMAIL', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final mockClient = MockClient((request) async {
+        if (request.url.path.contains('/telecaller/reports/summary')) {
+          return http.Response(
+            json.encode({
+              'success': true,
+              'data': {
+                'total_calls': 1,
+                'connected_calls': 0,
+                'timing_tiers': {
+                  'voicemail': 1,
+                  'not_connected': 0,
+                  'connected_short': 0,
+                  'connected_conversation': 0,
+                },
+              }
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        if (request.url.path.contains('/telecaller/calls')) {
+          return http.Response(
+            json.encode({
+              'success': true,
+              'data': {
+                'calls': [
+                  {
+                    'id': 101,
+                    'customer_name': 'Voicemail User',
+                    'customer_mobile': '9876543210',
+                    'call_status': 'IVR / Voicemail',
+                    'call_duration': 14,
+                    'timing_classification': 'VOICEMAIL',
+                    'source': 'MAIN',
+                  }
+                ],
+                'pagination': {'total': 1, 'pages': 1, 'current_page': 1}
+              }
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(json.encode({'success': true, 'data': {}}), 200);
+      });
+
+      ApiService.setClientForTesting(mockClient);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: CallReportsScreen(initialTabIndex: 1),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Voicemail User'), findsOneWidget);
+      expect(find.text('IVR / Voicemail'), findsOneWidget);
+      expect(find.text('14s • Voicemail'), findsOneWidget);
     });
   });
 }
