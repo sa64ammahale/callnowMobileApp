@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/config_service.dart';
+import 'package:callnow_new/widgets/forgot_password_sheet.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -329,6 +330,35 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               validator: (value) =>
                                   value?.isEmpty ?? true ? 'Enter your password' : null,
+                            ),
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: () {
+                                  ForgotPasswordSheet.show(
+                                    context,
+                                    initialEmail: _emailController.text.trim(),
+                                    initialCompanyCode: _companyCodeController.text.trim(),
+                                    onPasswordResetSuccess: (newPass) {
+                                      _passwordController.text = newPass;
+                                    },
+                                  );
+                                },
+                                style: TextButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                                  minimumSize: Size.zero,
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                child: const Text(
+                                  'Forgot password?',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF2563EB),
+                                  ),
+                                ),
+                              ),
                             ),
                           ] else ...[
                             // API Token Login

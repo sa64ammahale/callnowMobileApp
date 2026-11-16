@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:callnow_new/services/config_service.dart';
 import '../model/telecaller_engagement.dart';
 
 class EngagementService extends ChangeNotifier {
@@ -18,10 +19,11 @@ class EngagementService extends ChangeNotifier {
     if (cached != null) {
       try {
         final decoded = json.decode(cached);
+        final fallbackLimit = ConfigService.dailyCallingLimit;
         if (decoded is Map<String, dynamic>) {
-          _state = TelecallerEngagement.fromJson(decoded);
+          _state = TelecallerEngagement.fromJson(decoded, fallbackTarget: fallbackLimit);
         } else if (decoded is Map) {
-          _state = TelecallerEngagement.fromJson(Map<String, dynamic>.from(decoded));
+          _state = TelecallerEngagement.fromJson(Map<String, dynamic>.from(decoded), fallbackTarget: fallbackLimit);
         }
         notifyListeners();
       } catch (_) {}
@@ -30,7 +32,7 @@ class EngagementService extends ChangeNotifier {
 
   Future<void> updateFromApiResponse(Map<String, dynamic>? data) async {
     if (data == null) return;
-    _state = TelecallerEngagement.fromJson(data);
+    _state = TelecallerEngagement.fromJson(data, fallbackTarget: ConfigService.dailyCallingLimit);
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefKey, json.encode({

@@ -268,7 +268,7 @@ class ApiService {
   }
 
   /// Request Password Reset OTP to registered email
-  static Future<Map<String, dynamic>> sendPasswordResetOtp(String email) async {
+  static Future<Map<String, dynamic>> sendPasswordResetOtp(String email, {String? companyCode}) async {
     final cleanEmail = email.trim();
     if (cleanEmail.isEmpty) {
       throw Exception('Email address is required');
@@ -281,21 +281,35 @@ class ApiService {
       '$_baseUrl/auth/password/email-otp',
     ];
 
-    final body = json.encode({'email': cleanEmail});
+    final resolvedCompany = (companyCode ?? _companyCode)?.trim().toLowerCase();
+    final headers = {
+      ..._headers,
+      if (resolvedCompany != null && resolvedCompany.isNotEmpty)
+        'X-Company-Code': resolvedCompany,
+    };
+
+    final body = json.encode({
+      'email': cleanEmail,
+      if (resolvedCompany != null && resolvedCompany.isNotEmpty)
+        'company_code': resolvedCompany,
+    });
     http.Response? lastResponse;
 
     for (final url in endpoints) {
       try {
         final res = await _client.post(
           Uri.parse(url),
-          headers: _headers,
+          headers: headers,
           body: body,
         );
         lastResponse = res;
         if (res.statusCode == 200 || res.statusCode == 201) {
-          final data = json.decode(res.body);
-          if (data is Map<String, dynamic>) {
-            return data;
+          final decoded = json.decode(res.body);
+          if (decoded is Map<String, dynamic>) {
+            if (decoded['data'] is Map<String, dynamic>) {
+              return decoded['data'] as Map<String, dynamic>;
+            }
+            return decoded;
           }
           return {'success': true, 'message': 'OTP sent to $cleanEmail'};
         }
@@ -322,6 +336,7 @@ class ApiService {
     required String email,
     required String otp,
     required String newPassword,
+    String? companyCode,
   }) async {
     final cleanEmail = email.trim();
     final cleanOtp = otp.trim();
@@ -337,6 +352,13 @@ class ApiService {
       '$_baseUrl/auth/password/reset',
     ];
 
+    final resolvedCompany = (companyCode ?? _companyCode)?.trim().toLowerCase();
+    final headers = {
+      ..._headers,
+      if (resolvedCompany != null && resolvedCompany.isNotEmpty)
+        'X-Company-Code': resolvedCompany,
+    };
+
     final body = json.encode({
       'email': cleanEmail,
       'otp': cleanOtp,
@@ -345,6 +367,8 @@ class ApiService {
       'password': cleanPass,
       'new_password': cleanPass,
       'password_confirmation': cleanPass,
+      if (resolvedCompany != null && resolvedCompany.isNotEmpty)
+        'company_code': resolvedCompany,
     });
 
     http.Response? lastResponse;
@@ -353,14 +377,17 @@ class ApiService {
       try {
         final res = await _client.post(
           Uri.parse(url),
-          headers: _headers,
+          headers: headers,
           body: body,
         );
         lastResponse = res;
         if (res.statusCode == 200 || res.statusCode == 201) {
-          final data = json.decode(res.body);
-          if (data is Map<String, dynamic>) {
-            return data;
+          final decoded = json.decode(res.body);
+          if (decoded is Map<String, dynamic>) {
+            if (decoded['data'] is Map<String, dynamic>) {
+              return decoded['data'] as Map<String, dynamic>;
+            }
+            return decoded;
           }
           return {'success': true, 'message': 'Password reset successfully'};
         }

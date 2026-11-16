@@ -44,7 +44,7 @@ void main() {
       expect(eng.badgeTheme, 'dark');
       expect(eng.streakDays, 0);
       expect(eng.connectedToday, 0);
-      expect(eng.targetToday, 30);
+      expect(eng.targetToday, 250);
       expect(eng.targetMet, false);
       expect(eng.targetProgress, 0.0);
     });
@@ -121,7 +121,8 @@ void main() {
   });
 
   group('Dashboard Motivation Hub Widget Tests', () {
-    testWidgets('Dashboard renders Motivation Hub with level title, total XP, streak, and goal', (tester) async {
+    testWidgets('Dashboard renders Calling Desk shortcut card with level title, total XP, streak, and goal progress from user daily_calling_limit', (tester) async {
+      await ConfigService.saveAuthData('dummy_token', {'daily_calling_limit': 100});
       EngagementService.instance.setStateForTesting(
         TelecallerEngagement(
           totalXp: 450,
@@ -129,7 +130,7 @@ void main() {
           levelTitle: 'Silver Dial Master 🥈',
           streakDays: 3,
           connectedToday: 18,
-          targetToday: 30,
+          targetToday: 100,
           targetMet: false,
         ),
       );
@@ -157,10 +158,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      expect(find.widgetWithText(Card, 'Calling Desk'), findsOneWidget);
       expect(find.text('Silver Dial Master 🥈'), findsOneWidget);
       expect(find.text('450 XP'), findsOneWidget);
-      expect(find.text('3d Streak'), findsOneWidget);
-      expect(find.text("Today's Goal: 18 / 30 Connected"), findsOneWidget);
+      expect(find.text('3d'), findsOneWidget);
+      expect(find.text("Today's Goal: 18 / 100 Connected"), findsOneWidget);
+      expect(find.text('18%'), findsOneWidget);
+      expect(find.text('Start Calling Session'), findsOneWidget);
     });
   });
 

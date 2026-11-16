@@ -19,6 +19,7 @@ class UserProfile {
   final String? avatarUrl;
   final String? profilePicture;
   final String? profilePictureUrl;
+  final int dailyCallingLimit;
 
   UserProfile({
     required this.id,
@@ -37,6 +38,7 @@ class UserProfile {
     this.avatarUrl,
     this.profilePicture,
     this.profilePictureUrl,
+    this.dailyCallingLimit = 250,
   });
 
   static String _extractString(dynamic val) {
@@ -199,6 +201,7 @@ class UserProfile {
       avatarUrl: avatarUrlStr,
       profilePicture: profilePicture,
       profilePictureUrl: picUrlStr,
+      dailyCallingLimit: int.tryParse(user['daily_calling_limit']?.toString() ?? '') ?? 250,
     );
   }
 
@@ -265,5 +268,6 @@ class UserProfile {
         'avatar_url': avatarUrl ?? profilePhotoUrl,
         'profile_picture': profilePicture,
         'profile_picture_url': profilePictureUrl ?? profilePhotoUrl,
+        'daily_calling_limit': dailyCallingLimit,
       };
 }

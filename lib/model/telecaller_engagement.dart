@@ -21,11 +21,11 @@ class TelecallerEngagement {
     this.badgeTheme = 'dark',
     this.streakDays = 0,
     this.connectedToday = 0,
-    this.targetToday = 30,
+    this.targetToday = 250,
     this.targetMet = false,
   });
 
-  factory TelecallerEngagement.fromJson(Map<String, dynamic> json) {
+  factory TelecallerEngagement.fromJson(Map<String, dynamic> json, {int? fallbackTarget}) {
     int parseInt(dynamic val, int fallback) {
       if (val is int) return val;
       if (val is num) return val.toInt();
@@ -40,6 +40,9 @@ class TelecallerEngagement {
       return fallback;
     }
 
+    final rawTarget = parseInt(json['target_today'] ?? json['daily_target'] ?? json['daily_calling_limit'], 0);
+    final target = rawTarget > 0 ? rawTarget : (fallbackTarget ?? 250);
+
     return TelecallerEngagement(
       xpEarned: parseInt(json['xp_earned'], 0),
       callXp: parseInt(json['call_xp'], 0),
@@ -50,7 +53,7 @@ class TelecallerEngagement {
       badgeTheme: json['badge_theme']?.toString() ?? 'dark',
       streakDays: parseInt(json['streak_days'], 0),
       connectedToday: parseInt(json['connected_today'], 0),
-      targetToday: parseInt(json['target_today'], 30),
+      targetToday: target,
       targetMet: parseBool(json['target_met'], false),
     );
   }

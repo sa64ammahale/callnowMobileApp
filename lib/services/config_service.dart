@@ -153,6 +153,8 @@ class ConfigService {
     return userProfile.avatarImageProvider;
   }
 
+  static int get dailyCallingLimit => userProfile.dailyCallingLimit;
+
   static bool get isLoggedIn => _cachedToken != null;
 
   static String get userDisplayName {
