@@ -98,7 +98,13 @@ class FollowupModel {
   factory FollowupModel.fromJson(Map<String, dynamic> json) {
     DateTime? parseDate(dynamic val) {
       if (val == null) return null;
-      return DateTime.tryParse(val.toString());
+      final parsed = DateTime.tryParse(val.toString());
+      // Reject year-1 placeholder/null dates (e.g. SQL .NET default 0001-01-01)
+      // that DateTime.tryParse happily accepts but are meaningless.
+      // Without this, a year-1 scheduledTime is ~2025 years in the past and
+      // timeRemainingText reports an absurd "17768008 hrs overdue".
+      if (parsed != null && parsed.year < 1900) return null;
+      return parsed;
     }
 
     final rawServerId = json['server_id'] ?? (json['id'] is int ? json['id'] : int.tryParse(json['id']?.toString() ?? ''));

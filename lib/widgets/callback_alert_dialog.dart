@@ -350,8 +350,10 @@ class CallbackAlertDialog extends StatelessWidget {
             const SizedBox(height: 10),
 
             // Bottom Actions (Reschedule, Mark Done, Dismiss)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              alignment: WrapAlignment.end,
               children: [
                 TextButton.icon(
                   onPressed: () => _reschedule(context),
