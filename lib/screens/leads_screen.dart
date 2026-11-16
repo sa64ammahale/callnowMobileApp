@@ -54,7 +54,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
     });
 
     try {
-      final res = await ApiService.getCreatedLeads(page: 1, limit: 50, source: 'all');
+      final res = await ApiService.getCreatedLeads(page: 1, limit: 20, source: 'all');
       debugPrint('[LeadsScreen] getCreatedLeads RAW RESPONSE: $res');
       final raw = res['leads'];
       final pagObj = res['pagination'];
@@ -98,7 +98,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
       final nextPage = _currentPage + 1;
       final res = await ApiService.getCreatedLeads(
         page: nextPage,
-        limit: 50,
+        limit: 30,
         source: 'all',
       );
       final raw = res['leads'];
@@ -1280,34 +1280,45 @@ class _LeadsScreenState extends State<LeadsScreen> {
       );
     }
 
-    final showLoadMore = _hasMoreLeads && _activeStageFilter == 'ALL' && _searchController.text.isEmpty;
+    final showLoadMoreButton = _hasMoreLeads && !_isLoadingMoreLeads;
+    final filterOrSearchActive = _activeStageFilter != 'ALL' || _searchController.text.isNotEmpty;
+    final showAllLoaded = !_hasMoreLeads && _filteredLeads.isNotEmpty;
+    final showFooter = _isLoadingMoreLeads || showLoadMoreButton || showAllLoaded;
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(14, 6, 14, 80),
-      itemCount: _filteredLeads.length + (showLoadMore ? 1 : 0),
+      itemCount: _filteredLeads.length + (showFooter ? 1 : 0),
       itemBuilder: (context, index) {
         if (index == _filteredLeads.length) {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 12.0),
             child: Center(
-              child: OutlinedButton.icon(
-                onPressed: _isLoadingMoreLeads ? null : _loadMoreLeads,
-                icon: _isLoadingMoreLeads
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.arrow_downward, size: 18),
-                label: Text(
-                  _isLoadingMoreLeads
-                      ? 'Loading more leads...'
-                      : 'Load More Leads (${_totalLeadsCount - _allLeads.length} remaining)',
-                ),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-              ),
+              child: _isLoadingMoreLeads
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : showAllLoaded
+                      ? const Text(
+                          'All leads loaded',
+                          style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                        )
+                      : Tooltip(
+                          message: filterOrSearchActive
+                              ? 'Search and stage filters are applied client-side on the already-fetched batch. Clear filters to load more from the server.'
+                              : null,
+                          child: OutlinedButton.icon(
+                            onPressed: filterOrSearchActive ? null : _loadMoreLeads,
+                            icon: const Icon(Icons.arrow_downward, size: 18),
+                            label: Text(
+                              'Load More Leads (${_totalLeadsCount - _allLeads.length} remaining)',
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                        ),
             ),
           );
         }
