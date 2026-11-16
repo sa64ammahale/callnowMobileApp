@@ -1,11 +1,12 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/model/user_profile.dart';
 import 'package:callnow_new/services/secure_storage_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
 
 class ConfigService {
+  static final ValueNotifier<int> profileNotifier = ValueNotifier<int>(0);
   static const String _baseUrlKey = 'base_url';
   static const String _userDataKey = 'user_data';
   static const String _companyCodeKey = 'company_code';
@@ -145,6 +146,11 @@ class ConfigService {
   static String? get userProfilePhotoUrl {
     if (_cachedUserData == null) return null;
     return userProfile.profilePhotoUrl;
+  }
+
+  static ImageProvider? get userAvatarImageProvider {
+    if (_cachedUserData == null) return null;
+    return userProfile.avatarImageProvider;
   }
 
   static bool get isLoggedIn => _cachedToken != null;
@@ -314,6 +320,15 @@ class ConfigService {
       }
     });
 
+    // If incoming explicitly clears profile photo, remove photo keys from cached data
+    if (incoming.containsKey('profile_photo') && (incoming['profile_photo'] == null || incoming['profile_photo'] == '')) {
+      merged.remove('profile_photo');
+      merged.remove('profile_photo_url');
+      merged.remove('avatar_url');
+      merged.remove('profile_picture');
+      merged.remove('profile_picture_url');
+    }
+
     final resolvedCompanyCode = (companyCode ?? merged['company_code'] ?? _cachedCompanyCode)?.toString().trim().toLowerCase();
     if (resolvedCompanyCode != null && resolvedCompanyCode.isNotEmpty) {
       merged['company_code'] = resolvedCompanyCode;
@@ -356,6 +371,7 @@ class ConfigService {
     await prefs.setString(_userDataKey, json.encode(merged));
     _cachedToken = token;
     _cachedUserData = merged;
+    profileNotifier.value++;
     // Persist the login date so midnight rollover can be detected across
     // app restarts (process killed before midnight, reopened after).
     _cachedLastLoginDate = DateTime.now();
@@ -382,6 +398,7 @@ class ConfigService {
     _cachedToken = null;
     _cachedUserData = null;
     _cachedLastLoginDate = null;
+    profileNotifier.value++;
     if (clearCompanyCode) {
       _cachedCompanyCode = null;
       await prefs.remove(_companyCodeKey);

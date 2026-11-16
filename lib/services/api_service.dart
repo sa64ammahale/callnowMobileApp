@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/secure_http_client.dart';
+import 'package:callnow_new/services/engagement_service.dart';
 import 'package:callnow_new/model/user_profile.dart';
 
 class ApiService {
@@ -387,6 +388,7 @@ class ApiService {
     required String name,
     String? companyName,
     String? photoBase64,
+    bool removePhoto = false,
   }) async {
     final cleanName = name.trim();
     if (cleanName.isEmpty) {
@@ -396,7 +398,9 @@ class ApiService {
       'name': cleanName,
       if (companyName != null && companyName.trim().isNotEmpty)
         'company_name': companyName.trim(),
-      if (photoBase64 != null && photoBase64.isNotEmpty)
+      if (removePhoto)
+        'remove_photo': true
+      else if (photoBase64 != null && photoBase64.isNotEmpty)
         'profile_photo_base64': photoBase64,
     };
     final response = await _client.post(
@@ -780,7 +784,16 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['success'] == true) return _toMap(data['data']);
+      if (data['success'] == true) {
+        final map = _toMap(data['data']);
+        final eng = map['engagement'] ?? data['engagement'];
+        if (eng is Map<String, dynamic>) {
+          EngagementService.instance.updateFromApiResponse(eng);
+        } else if (eng is Map) {
+          EngagementService.instance.updateFromApiResponse(Map<String, dynamic>.from(eng));
+        }
+        return map;
+      }
       throw Exception(data['message'] ?? 'Failed to load report summary');
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();
@@ -887,7 +900,17 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['success'] == true) return _toMap(data['data']);
+      if (data['success'] == true) {
+        final map = _toMap(data['data']);
+        // Hydrate engagement service automatically
+        final eng = map['engagement'] ?? data['engagement'];
+        if (eng is Map<String, dynamic>) {
+          EngagementService.instance.updateFromApiResponse(eng);
+        } else if (eng is Map) {
+          EngagementService.instance.updateFromApiResponse(Map<String, dynamic>.from(eng));
+        }
+        return map;
+      }
       throw Exception(data['message'] ?? 'Failed to submit call result');
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();
@@ -935,7 +958,17 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['success'] == true) return _toMap(data['data']);
+      if (data['success'] == true) {
+        final map = _toMap(data['data']);
+        // Hydrate engagement service automatically
+        final eng = map['engagement'] ?? data['engagement'];
+        if (eng is Map<String, dynamic>) {
+          EngagementService.instance.updateFromApiResponse(eng);
+        } else if (eng is Map) {
+          EngagementService.instance.updateFromApiResponse(Map<String, dynamic>.from(eng));
+        }
+        return map;
+      }
       throw Exception(data['message'] ?? 'Failed to submit call');
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();

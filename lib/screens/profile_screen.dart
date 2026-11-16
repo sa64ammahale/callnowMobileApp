@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
@@ -15,6 +17,7 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   bool _isLoading = true;
   bool _isRefreshing = false;
+  bool _isUploadingPhoto = false;
   Map<String, dynamic> _profileData = {};
 
   @override
@@ -73,6 +76,189 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           );
         }
+      }
+    }
+  }
+
+  void _showPhotoSourceSheet(UserProfile profile) {
+    final hasPhoto = (profile.profilePhotoUrl != null && profile.profilePhotoUrl!.isNotEmpty) ||
+        profile.avatarImageProvider != null ||
+        (profile.profilePhoto != null && profile.profilePhoto!.isNotEmpty);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFCBD5E1),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 14, 20, 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.account_circle, color: Color(0xFF2563EB), size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'Profile Photo',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFEFF6FF),
+                  foregroundColor: Color(0xFF2563EB),
+                  child: Icon(Icons.camera_alt_outlined, size: 20),
+                ),
+                title: const Text('Take Photo', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                subtitle: const Text('Capture new photo with camera', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickAndUploadPhoto(ImageSource.camera, profile);
+                },
+              ),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFEFF6FF),
+                  foregroundColor: Color(0xFF2563EB),
+                  child: Icon(Icons.photo_library_outlined, size: 20),
+                ),
+                title: const Text('Choose from Gallery', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                subtitle: const Text('Select an existing photo from gallery', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickAndUploadPhoto(ImageSource.gallery, profile);
+                },
+              ),
+              if (hasPhoto) ...[
+                const Divider(height: 1),
+                ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: Color(0xFFFEF2F2),
+                    foregroundColor: Color(0xFFDC2626),
+                    child: Icon(Icons.delete_outline, size: 20),
+                  ),
+                  title: const Text('Remove Photo', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: Color(0xFFDC2626))),
+                  subtitle: const Text('Revert to initial letter avatar', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _removeProfilePhoto(profile);
+                  },
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _pickAndUploadPhoto(ImageSource source, UserProfile profile) async {
+    try {
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(
+        source: source,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 85,
+      );
+
+      if (pickedFile == null) return;
+
+      setState(() => _isUploadingPhoto = true);
+
+      final bytes = await pickedFile.readAsBytes();
+      if (bytes.isEmpty) {
+        throw Exception('Selected image is empty');
+      }
+
+      final base64String = base64Encode(bytes);
+      final mimeType = pickedFile.mimeType ?? 'image/jpeg';
+      final photoBase64Uri = 'data:$mimeType;base64,$base64String';
+
+      final updated = await ApiService.updateProfile(
+        name: profile.name,
+        companyName: profile.companyName,
+        photoBase64: photoBase64Uri,
+      );
+
+      if (mounted) {
+        setState(() {
+          _profileData = updated;
+          _isUploadingPhoto = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Profile photo updated successfully!'),
+            backgroundColor: Color(0xFF16A34A),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isUploadingPhoto = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update photo: ${e.toString().replaceAll('Exception: ', '')}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _removeProfilePhoto(UserProfile profile) async {
+    setState(() => _isUploadingPhoto = true);
+    try {
+      final updated = await ApiService.updateProfile(
+        name: profile.name,
+        companyName: profile.companyName,
+        removePhoto: true,
+      );
+
+      if (mounted) {
+        setState(() {
+          _profileData = updated;
+          _isUploadingPhoto = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Profile photo removed successfully!'),
+            backgroundColor: Color(0xFF16A34A),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isUploadingPhoto = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to remove photo: ${e.toString().replaceAll('Exception: ', '')}'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -527,31 +713,66 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
                       child: Column(
                         children: [
-                          CircleAvatar(
-                            radius: 40,
-                            backgroundColor: Colors.white.withValues(alpha: 0.25),
-                            child: CircleAvatar(
-                              radius: 36,
-                              backgroundColor: Colors.white,
-                              backgroundImage: (profile.profilePhotoUrl != null && profile.profilePhotoUrl!.isNotEmpty)
-                                  ? NetworkImage(profile.profilePhotoUrl!)
-                                  : profile.avatarImageProvider,
-                              onBackgroundImageError: (profile.profilePhotoUrl != null || profile.avatarImageProvider != null)
-                                  ? (exception, stackTrace) {
-                                      debugPrint('[ProfileScreen] Avatar image load error: $exception');
-                                    }
-                                  : null,
-                              child: (profile.profilePhotoUrl == null && profile.avatarImageProvider == null)
-                                  ? Text(
-                                      displayName.trim().isNotEmpty ? displayName.trim()[0].toUpperCase() : 'A',
-                                      style: const TextStyle(
-                                        fontSize: 32,
-                                        fontWeight: FontWeight.bold,
-                                        color: Color(0xFF1E3A8A),
+                          Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              CircleAvatar(
+                                radius: 44,
+                                backgroundColor: Colors.white.withValues(alpha: 0.25),
+                                child: CircleAvatar(
+                                  radius: 40,
+                                  backgroundColor: Colors.white,
+                                  backgroundImage: (profile.profilePhotoUrl != null && profile.profilePhotoUrl!.isNotEmpty)
+                                      ? NetworkImage(profile.profilePhotoUrl!)
+                                      : profile.avatarImageProvider,
+                                  onBackgroundImageError: (profile.profilePhotoUrl != null || profile.avatarImageProvider != null)
+                                      ? (exception, stackTrace) {
+                                          debugPrint('[ProfileScreen] Avatar image load error: $exception');
+                                        }
+                                      : null,
+                                  child: _isUploadingPhoto
+                                      ? const SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.5,
+                                            color: Color(0xFF1E3A8A),
+                                          ),
+                                        )
+                                      : ((profile.profilePhotoUrl == null && profile.avatarImageProvider == null)
+                                          ? Text(
+                                              displayName.trim().isNotEmpty ? displayName.trim()[0].toUpperCase() : 'A',
+                                              style: const TextStyle(
+                                                fontSize: 32,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF1E3A8A),
+                                              ),
+                                            )
+                                          : null),
+                                ),
+                              ),
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Material(
+                                  color: Colors.white,
+                                  shape: const CircleBorder(),
+                                  elevation: 3,
+                                  child: InkWell(
+                                    onTap: _isUploadingPhoto ? null : () => _showPhotoSourceSheet(profile),
+                                    customBorder: const CircleBorder(),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(7.0),
+                                      child: Icon(
+                                        Icons.camera_alt_rounded,
+                                        size: 16,
+                                        color: Color(0xFF2563EB),
                                       ),
-                                    )
-                                  : null,
-                            ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 12),
                           Text(

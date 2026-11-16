@@ -135,6 +135,18 @@ class _LeadsScreenState extends State<LeadsScreen> {
         }
       }
 
+      // Ensure current user (e.g. System Administrator) is always present for self-filtering
+      final myId = ConfigService.userProfile.id;
+      final myName = ConfigService.userDisplayName;
+      final myRole = ConfigService.userRole;
+      if (myId > 0 && !loadedOfficers.any((o) => o['id'] == myId)) {
+        loadedOfficers.insert(0, {
+          'id': myId,
+          'name': '$myName (Me)',
+          'role': myRole,
+        });
+      }
+
       _mergeOfficersFromLeads(loadedOfficers);
 
       if (mounted) {
@@ -1670,6 +1682,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
   }
 
   void _showOfficerSelectionSheet() {
+    final searchCtrl = TextEditingController();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1681,80 +1694,93 @@ class _LeadsScreenState extends State<LeadsScreen> {
             final filteredOfficers = _officers.where((o) {
               final name = (o['name'] ?? '').toString().toLowerCase();
               final role = (o['role'] ?? '').toString().toLowerCase();
-              return officerSearch.isEmpty ||
-                  name.contains(officerSearch.toLowerCase()) ||
-                  role.contains(officerSearch.toLowerCase());
+              final q = officerSearch.toLowerCase();
+              return q.isEmpty || name.contains(q) || role.contains(q);
             }).toList();
 
-            return Container(
-              height: MediaQuery.of(context).size.height * 0.65,
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom,
               ),
-              child: Column(
-                children: [
-                  Center(
-                    child: Container(
-                      margin: const EdgeInsets.only(top: 10, bottom: 8),
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFCBD5E1),
-                        borderRadius: BorderRadius.circular(2),
+              child: Container(
+                height: MediaQuery.of(context).size.height * 0.70,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                child: Column(
+                  children: [
+                    Center(
+                      child: Container(
+                        margin: const EdgeInsets.only(top: 10, bottom: 8),
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFCBD5E1),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(Icons.people_outline, color: Color(0xFF2563EB), size: 20),
-                            SizedBox(width: 8),
-                            Text(
-                              'Filter by Officer / User',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF0F172A),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.people_outline, color: Color(0xFF2563EB), size: 20),
+                              SizedBox(width: 8),
+                              Text(
+                                'Filter by Officer / User',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF0F172A),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 20),
-                          onPressed: () => Navigator.pop(context),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-                    child: SizedBox(
-                      height: 38,
-                      child: TextField(
-                        decoration: InputDecoration(
-                          hintText: 'Search officer by name or role...',
-                          hintStyle: const TextStyle(fontSize: 12),
-                          prefixIcon: const Icon(Icons.search, size: 16),
-                          contentPadding: EdgeInsets.zero,
-                          filled: true,
-                          fillColor: const Color(0xFFF1F5F9),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide.none,
+                            ],
                           ),
-                        ),
-                        onChanged: (val) {
-                          setSheetState(() => officerSearch = val.trim());
-                        },
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 20),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+                      child: SizedBox(
+                        height: 38,
+                        child: TextField(
+                          controller: searchCtrl,
+                          decoration: InputDecoration(
+                            hintText: 'Search officer by name or role...',
+                            hintStyle: const TextStyle(fontSize: 12),
+                            prefixIcon: const Icon(Icons.search, size: 16),
+                            suffixIcon: officerSearch.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear, size: 16),
+                                    onPressed: () {
+                                      searchCtrl.clear();
+                                      setSheetState(() => officerSearch = '');
+                                    },
+                                  )
+                                : null,
+                            contentPadding: EdgeInsets.zero,
+                            filled: true,
+                            fillColor: const Color(0xFFF1F5F9),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                          onChanged: (val) {
+                            setSheetState(() => officerSearch = val.trim());
+                          },
+                        ),
+                      ),
+                    ),
                   Expanded(
                     child: ListView(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1845,10 +1871,16 @@ class _LeadsScreenState extends State<LeadsScreen> {
                                       ? const Color(0xFF4F46E5)
                                       : const Color(0xFFF1F5F9),
                                   foregroundColor: isSelected ? Colors.white : const Color(0xFF475569),
-                                  child: Text(
-                                    officerName.isNotEmpty ? officerName[0].toUpperCase() : '?',
-                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                                  ),
+                                  backgroundImage: (officerId == ConfigService.userProfile.id)
+                                      ? ConfigService.userAvatarImageProvider
+                                      : null,
+                                  child: (officerId == ConfigService.userProfile.id &&
+                                          ConfigService.userAvatarImageProvider != null)
+                                      ? null
+                                      : Text(
+                                          officerName.isNotEmpty ? officerName[0].toUpperCase() : '?',
+                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                                        ),
                                 ),
                                 title: Text(
                                   officerName,
@@ -1881,11 +1913,12 @@ class _LeadsScreenState extends State<LeadsScreen> {
                   ),
                 ],
               ),
-            );
-          },
-        );
-      },
-    );
+            ),
+          );
+        },
+      );
+    },
+  );
   }
 
   Widget _buildBody() {
@@ -2149,12 +2182,21 @@ class _LeadsScreenState extends State<LeadsScreen> {
                                   borderRadius: BorderRadius.circular(6),
                                   border: Border.all(color: const Color(0xFFC7D2FE)),
                                 ),
-                                child: const Row(
+                                child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(Icons.star, size: 11, color: Color(0xFF4F46E5)),
-                                    SizedBox(width: 3),
-                                    Text(
+                                    if (ConfigService.userAvatarImageProvider != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(right: 3.0),
+                                        child: CircleAvatar(
+                                          radius: 6,
+                                          backgroundImage: ConfigService.userAvatarImageProvider,
+                                        ),
+                                      )
+                                    else
+                                      const Icon(Icons.star, size: 11, color: Color(0xFF4F46E5)),
+                                    const SizedBox(width: 3),
+                                    const Text(
                                       'My Lead',
                                       style: TextStyle(
                                         fontSize: 10,

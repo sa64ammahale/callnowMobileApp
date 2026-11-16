@@ -8,6 +8,7 @@ import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
 import 'package:callnow_new/services/notification_service.dart';
 import 'package:callnow_new/services/permission_service.dart';
+import 'package:callnow_new/services/engagement_service.dart';
 import 'package:callnow_new/widgets/callback_alert_dialog.dart';
 import 'package:callnow_new/widgets/incoming_call_action_dialog.dart';
 import 'package:callnow_new/screens/calling_desk_screen.dart';
@@ -15,6 +16,7 @@ import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/screens/leads_screen.dart';
 import 'package:callnow_new/screens/followup_screen.dart';
 import 'package:callnow_new/screens/settings_screen.dart';
+import 'package:callnow_new/screens/profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -333,6 +335,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       const SettingsScreen(),
     ];
 
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -346,6 +350,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ],
         ),
         actions: [
+          // User Profile Avatar (tap to open Profile Screen)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2.0),
+            child: InkWell(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                );
+              },
+              borderRadius: BorderRadius.circular(18),
+              child: Padding(
+                padding: const EdgeInsets.all(4.0),
+                child: ValueListenableBuilder<int>(
+                  valueListenable: ConfigService.profileNotifier,
+                  builder: (context, _, child) {
+                    final avatarProvider = ConfigService.userAvatarImageProvider;
+                    final name = ConfigService.userDisplayName;
+                    return CircleAvatar(
+                      radius: 14,
+                      backgroundColor: colorScheme.primaryContainer,
+                      backgroundImage: avatarProvider,
+                      child: avatarProvider == null
+                          ? Text(
+                              name.isNotEmpty ? name[0].toUpperCase() : 'U',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: colorScheme.onPrimaryContainer,
+                              ),
+                            )
+                          : null,
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
           ListenableBuilder(
             listenable: FollowupService.instance,
             builder: (context, _) {
@@ -526,16 +568,38 @@ class _DashboardPageState extends State<DashboardPage> {
             // User Greeting Header with Real User Identity
             Row(
               children: [
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: colorScheme.primaryContainer,
-                  child: Text(
-                    userName.isNotEmpty ? userName[0].toUpperCase() : 'U',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
-                      color: colorScheme.onPrimaryContainer,
-                    ),
+                InkWell(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(26),
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: ConfigService.profileNotifier,
+                    builder: (context, _, child) {
+                      final avatarProvider = ConfigService.userAvatarImageProvider;
+                      return CircleAvatar(
+                        radius: 24,
+                        backgroundColor: colorScheme.primary.withValues(alpha: 0.15),
+                        child: CircleAvatar(
+                          radius: 22,
+                          backgroundColor: colorScheme.primary,
+                          backgroundImage: avatarProvider,
+                          child: avatarProvider == null
+                              ? Text(
+                                  userName.isNotEmpty ? userName[0].toUpperCase() : 'U',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : null,
+                        ),
+                      );
+                    },
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -744,6 +808,117 @@ class _DashboardPageState extends State<DashboardPage> {
                 ],
               ),
             const SizedBox(height: 20),
+
+            // Motivation Hub / Telecaller Engagement Card
+            ListenableBuilder(
+              listenable: EngagementService.instance,
+              builder: (context, _) {
+                final eng = EngagementService.instance.state;
+                return Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      gradient: LinearGradient(
+                        colors: [Colors.deepPurple.shade700, Colors.indigo.shade800],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.18),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    eng.levelTitle,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '${eng.totalXp} XP',
+                                  style: const TextStyle(
+                                    color: Colors.amberAccent,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (eng.streakDays > 0)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withValues(alpha: 0.25),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.local_fire_department, color: Colors.amber, size: 16),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${eng.streakDays}d Streak',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "Today's Goal: ${eng.connectedToday} / ${eng.targetToday} Connected",
+                                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: LinearProgressIndicator(
+                                      value: eng.targetProgress,
+                                      minHeight: 8,
+                                      backgroundColor: Colors.white24,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        eng.targetMet ? Colors.greenAccent : Colors.amberAccent,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
 
             // Quick Shortcuts Card
             Card(

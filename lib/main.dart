@@ -14,6 +14,7 @@ import 'package:callnow_new/screens/permission_screen.dart';
 import 'package:callnow_new/screens/server_settings_screen.dart';
 import 'package:callnow_new/services/notification_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
+import 'package:callnow_new/services/engagement_service.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -23,6 +24,7 @@ void main() async {
     ConfigService.init(),
     NotificationService.init(),
     FollowupService.init(),
+    EngagementService.instance.init(),
   ]);
   runApp(const MyApp());
 }

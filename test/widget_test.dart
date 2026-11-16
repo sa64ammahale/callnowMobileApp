@@ -91,6 +91,7 @@ void main() {
     );
 
     // Tap on Detailed Call Reports shortcut
+    await tester.ensureVisible(find.text('Detailed Call Reports'));
     await tester.tap(find.text('Detailed Call Reports'));
     await tester.pump();
 

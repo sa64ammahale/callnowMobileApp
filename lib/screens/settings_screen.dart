@@ -159,17 +159,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         children: [
                           Row(
                             children: [
-                              CircleAvatar(
-                                radius: 26,
-                                backgroundColor: const Color(0xFF2563EB),
-                                child: Text(
-                                  userName.isNotEmpty ? userName[0].toUpperCase() : 'U',
-                                  style: const TextStyle(
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                  ),
-                                ),
+                              ValueListenableBuilder<int>(
+                                valueListenable: ConfigService.profileNotifier,
+                                builder: (context, _, child) {
+                                  final avatarProvider = ConfigService.userAvatarImageProvider;
+                                  return CircleAvatar(
+                                    radius: 28,
+                                    backgroundColor: const Color(0xFF2563EB).withValues(alpha: 0.15),
+                                    child: CircleAvatar(
+                                      radius: 26,
+                                      backgroundColor: const Color(0xFF2563EB),
+                                      backgroundImage: avatarProvider,
+                                      child: avatarProvider == null
+                                          ? Text(
+                                              userName.isNotEmpty ? userName[0].toUpperCase() : 'U',
+                                              style: const TextStyle(
+                                                fontSize: 22,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.white,
+                                              ),
+                                            )
+                                          : null,
+                                    ),
+                                  );
+                                },
                               ),
                               const SizedBox(width: 14),
                               Expanded(

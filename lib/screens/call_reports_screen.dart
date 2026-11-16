@@ -781,7 +781,6 @@ class CallReportsScreenState extends State<CallReportsScreen>
     final double convoPct = total > 0 ? (conversations / total) * 100 : 0.0;
     final double shortPct = total > 0 ? (shortCalls / total) * 100 : 0.0;
     final double notConnPct = total > 0 ? (notConnected / total) * 100 : 0.0;
-    final double vmPct = total > 0 ? (voicemails / total) * 100 : 0.0;
 
     return Card(
       elevation: 2,

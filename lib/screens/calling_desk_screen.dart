@@ -79,7 +79,8 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   DateTime? _followupDateTime;
   bool _allowUnconnectedOverrideForShortCalls = false;
 
-  bool get _isCallConnected => _durationSeconds > 0;
+  @visibleForTesting
+  bool get isCallConnected => _durationSeconds > 0;
 
   final List<Map<String, dynamic>> _connectedOptions = [
     {
@@ -827,6 +828,51 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     }
   }
 
+  void _showEngagementFeedback(Map<String, dynamic>? result, {String? fallbackMessage}) {
+    if (result != null && result['engagement'] != null) {
+      final dynamic rawEng = result['engagement'];
+      final Map<String, dynamic> eng = rawEng is Map<String, dynamic>
+          ? rawEng
+          : (rawEng is Map ? Map<String, dynamic>.from(rawEng) : {});
+      final xpEarned = (eng['xp_earned'] as num?)?.toInt() ?? int.tryParse(eng['xp_earned']?.toString() ?? '0') ?? 0;
+      final bonusXp = (eng['target_bonus_xp'] as num?)?.toInt() ?? int.tryParse(eng['target_bonus_xp']?.toString() ?? '0') ?? 0;
+      if (mounted && xpEarned > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.deepPurple.shade900,
+            duration: const Duration(seconds: 2),
+            content: Row(
+              children: [
+                const Icon(Icons.stars, color: Colors.amberAccent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    bonusXp > 0
+                        ? '🎯 Target Hit! +$xpEarned XP (Bonus included!)'
+                        : '+$xpEarned XP Earned!',
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+        return;
+      }
+    }
+
+    if (fallbackMessage != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(fallbackMessage),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   Future<void> _submitAndNext() async {
     final lead = _currentLead;
     if (lead == null) return;
@@ -977,7 +1023,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     setState(() => _isSubmitting = true);
 
     try {
-      await ApiService.submitCallResult(
+      final result = await ApiService.submitCallResult(
         callId: leadId,
         source: source,
         status: statusLabel,
@@ -996,12 +1042,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
         final followupNotice = _followupDateTime != null
             ? ' (⏰ Callback set for ${_followupDateTime!.day}/${_followupDateTime!.month} ${_followupDateTime!.hour.toString().padLeft(2, '0')}:${_followupDateTime!.minute.toString().padLeft(2, '0')})'
             : '';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Call saved: $statusLabel for ${lead['name']}$followupNotice'),
-            duration: const Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
-          ),
+
+        _showEngagementFeedback(
+          result,
+          fallbackMessage: 'Call saved: $statusLabel for ${lead['name']}$followupNotice',
         );
 
         setState(() {
@@ -1324,7 +1368,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                                   final source = (leadData['source'] ?? 'TEMPORARY').toString();
 
                                   // Submit call with loan qualification (converts Client Contact -> Lead on server)
-                                  await ApiService.submitCallResult(
+                                  final result = await ApiService.submitCallResult(
                                     callId: leadId,
                                     source: source,
                                     status: statusLabel ?? 'Enquiry/ Intrested',
@@ -1351,20 +1395,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                                     final leadIdentifier = CallingDeskScreen.getLeadIdentifier(leadData);
                                     CallingDeskScreen.markLeadProcessed(leadIdentifier);
 
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Row(
-                                          children: [
-                                            const Icon(Icons.check_circle_rounded, color: Colors.white),
-                                            const SizedBox(width: 8),
-                                            Expanded(
-                                              child: Text('Contact converted to Lead for ${nameCtrl.text.trim()}! Added to pipeline.'),
-                                            ),
-                                          ],
-                                        ),
-                                        backgroundColor: const Color(0xFF16A34A),
-                                        behavior: SnackBarBehavior.floating,
-                                      ),
+                                    _showEngagementFeedback(
+                                      result,
+                                      fallbackMessage: 'Contact converted to Lead for ${nameCtrl.text.trim()}! Added to pipeline.',
                                     );
 
                                     setState(() {
@@ -1569,6 +1602,15 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     final company = (lead['company'] ?? '').toString().trim();
     final pkg = (lead['package'] ?? '').toString().trim();
     final formattedPkg = _formatPackageAmount(pkg);
+    final otherInfo = (lead['other_info'] ??
+            lead['otherInfo'] ??
+            lead['notes'] ??
+            lead['remarks'] ??
+            lead['CUST_OTHER_INFO'] ??
+            lead['MAINDATABASE_OTHER_INFO'] ??
+            '')
+        .toString()
+        .trim();
 
     // Lead count & call status from API
     final callCount = int.tryParse(lead['call_count']?.toString() ?? '0') ?? 0;
@@ -1593,6 +1635,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
             mobile: mobile,
             company: company,
             formattedPkg: formattedPkg,
+            otherInfo: otherInfo,
             callCount: callCount,
             lastStatus: lastStatus,
             isCalledBefore: isCalledBefore,
@@ -1608,6 +1651,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     required String mobile,
     required String company,
     required String formattedPkg,
+    required String otherInfo,
     required int callCount,
     required String lastStatus,
     required bool isCalledBefore,
@@ -1739,6 +1783,31 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                     ),
                   ),
                 ),
+                if (otherInfo.isNotEmpty) ...[
+                  const Divider(height: 16, thickness: 0.5),
+                  _buildInfoRow(
+                    icon: Icons.notes_rounded,
+                    label: 'Other Info',
+                    valueWidget: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Text(
+                        otherInfo,
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          color: Color(0xFF334155),
+                          fontWeight: FontWeight.w500,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1866,7 +1935,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           const SizedBox(width: 8),
         ],
         SizedBox(
-          width: 72,
+          width: 78,
           child: Text(
             label,
             style: const TextStyle(
