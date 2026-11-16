@@ -9,6 +9,7 @@ class ConfigService {
   static const String _baseUrlKey = 'base_url';
   static const String _userDataKey = 'user_data';
   static const String _companyCodeKey = 'company_code';
+  static const String _lastLoginDateKey = 'last_login_date';
   static const String _defaultBaseUrl =
       'https://callnow.increditsolutions.in/api/v1';
 
@@ -16,6 +17,7 @@ class ConfigService {
   static String? _cachedToken;
   static String? _cachedCompanyCode;
   static Map<String, dynamic>? _cachedUserData;
+  static DateTime? _cachedLastLoginDate;
   static bool _initialized = false;
 
   @visibleForTesting
@@ -25,11 +27,44 @@ class ConfigService {
     _cachedToken = null;
     _cachedCompanyCode = null;
     _cachedUserData = null;
+    _cachedLastLoginDate = null;
   }
+
+  static DateTime? get lastLoginDate => _cachedLastLoginDate;
 
   static Future<void> init() async {
     if (_initialized) return;
     final prefs = await SharedPreferences.getInstance();
+
+    // Check last login date — if from a previous calendar day, clear all auth
+    // data so the user must log in again on the new day. This covers the case
+    // where the app process was killed before midnight and restarted after.
+    final lastLoginStr = prefs.getString(_lastLoginDateKey);
+    if (lastLoginStr != null) {
+      try {
+        final lastLogin = DateTime.tryParse(lastLoginStr);
+        if (lastLogin != null) {
+          final today = DateTime.now();
+          if (today.day != lastLogin.day ||
+              today.month != lastLogin.month ||
+              today.year != lastLogin.year) {
+            await SecureStorageService.instance.clearAll();
+            await prefs.remove(_userDataKey);
+            _cachedToken = null;
+            _cachedUserData = null;
+            _cachedCompanyCode = null;
+            await prefs.remove(_companyCodeKey);
+            await prefs.remove(_lastLoginDateKey);
+            FollowupService.instance.clearLocalCache();
+            _cachedBaseUrl = prefs.getString(_baseUrlKey) ?? _defaultBaseUrl;
+            _initialized = true;
+            return;
+          }
+          _cachedLastLoginDate = lastLogin;
+        }
+      } catch (_) {}
+    }
+
     _cachedBaseUrl = prefs.getString(_baseUrlKey) ?? _defaultBaseUrl;
     _cachedToken = await SecureStorageService.instance.readToken();
     _cachedCompanyCode = await SecureStorageService.instance.readCompanyCode() ??
@@ -321,6 +356,10 @@ class ConfigService {
     await prefs.setString(_userDataKey, json.encode(merged));
     _cachedToken = token;
     _cachedUserData = merged;
+    // Persist the login date so midnight rollover can be detected across
+    // app restarts (process killed before midnight, reopened after).
+    _cachedLastLoginDate = DateTime.now();
+    await prefs.setString(_lastLoginDateKey, _cachedLastLoginDate!.toIso8601String());
   }
 
   static final List<void Function()> _onLogoutCallbacks = [];
@@ -339,8 +378,10 @@ class ConfigService {
     final savedCompany = _cachedCompanyCode;
     await SecureStorageService.instance.clearAll();
     await prefs.remove(_userDataKey);
+    await prefs.remove(_lastLoginDateKey);
     _cachedToken = null;
     _cachedUserData = null;
+    _cachedLastLoginDate = null;
     if (clearCompanyCode) {
       _cachedCompanyCode = null;
       await prefs.remove(_companyCodeKey);

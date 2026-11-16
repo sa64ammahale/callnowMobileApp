@@ -1,127 +1,129 @@
 import 'package:flutter_test/flutter_test.dart';
-
-// ---------------------------------------------------------------------------
-// Midnight auto-logout logic unit tests
-// ---------------------------------------------------------------------------
-// These tests verify the _scheduleMidnightLogout / _checkDateChangeLogout
-// logic in isolation without spinning up the full HomeScreen widget (which
-// requires platform channels for call-log & notifications).
-// ---------------------------------------------------------------------------
-
-/// Returns the Duration until the next 00:00:00 local time — mirrors the
-/// production logic in _HomeScreenState._scheduleMidnightLogout().
-Duration durationUntilNextMidnight(DateTime now) {
-  final nextMidnight = DateTime(now.year, now.month, now.day + 1);
-  return nextMidnight.difference(now);
-}
-
-/// Returns true if [now] is on a different calendar day than [sessionStart].
-bool hasDateChanged(DateTime sessionStart, DateTime now) {
-  return now.day != sessionStart.day ||
-      now.month != sessionStart.month ||
-      now.year != sessionStart.year;
-}
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:callnow_new/services/config_service.dart';
+import 'package:callnow_new/services/secure_storage_service.dart';
 
 void main() {
-  group('Midnight Logout Logic', () {
-    // ── durationUntilNextMidnight ──────────────────────────────────────────
+  TestWidgetsFlutterBinding.ensureInitialized();
 
-    test('returns positive duration when called well before midnight', () {
-      final now = DateTime(2026, 11, 4, 22, 30, 0); // 22:30
-      final delay = durationUntilNextMidnight(now);
-      expect(delay.isNegative, isFalse);
-      expect(delay.inMinutes, 90); // 1 h 30 m = 90 min
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    SecureStorageService.setBackendForTesting(MemorySecureStorageBackend());
+    ConfigService.resetForTesting();
+  });
+
+  tearDown(() {
+    SecureStorageService.resetBackend();
+  });
+
+  group('Midnight Auto-Logout — Last Login Date Tracking', () {
+    test('saveAuthData persists last login date', () async {
+      await ConfigService.saveAuthData(
+        'test-token-123',
+        {'name': 'Sangam'},
+      );
+
+      expect(ConfigService.lastLoginDate, isNotNull);
+      expect(ConfigService.lastLoginDate!.day, DateTime.now().day);
+      expect(ConfigService.lastLoginDate!.month, DateTime.now().month);
+      expect(ConfigService.lastLoginDate!.year, DateTime.now().year);
     });
 
-    test('returns ~24h when called just after midnight', () {
-      final now = DateTime(2026, 11, 4, 0, 0, 1); // 1 second after midnight
-      final delay = durationUntilNextMidnight(now);
-      // Should be ~23 h 59 m 59 s
-      expect(delay.inHours, 23);
-      expect(delay.inSeconds, closeTo(86399, 2));
+    test('clearAuthData clears last login date', () async {
+      await ConfigService.saveAuthData('test-token-123', {'name': 'Sangam'});
+      expect(ConfigService.lastLoginDate, isNotNull);
+
+      await ConfigService.clearAuthData();
+      expect(ConfigService.lastLoginDate, isNull);
     });
 
-    test('returns ~1 day when called at exactly midnight', () {
-      final now = DateTime(2026, 11, 4, 0, 0, 0);
-      final delay = durationUntilNextMidnight(now);
-      expect(delay.inHours, 24);
+    test('init clears auth when last login was a previous day', () async {
+      // Simulate a login from yesterday
+      final yesterday = DateTime.now().subtract(const Duration(days: 1));
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_login_date', yesterday.toIso8601String());
+      await prefs.setString('user_data', '{"name": "Sangam"}');
+
+      // Simulate a stored token
+      SecureStorageService.instance.writeToken('old-token');
+
+      await ConfigService.init();
+
+      // Auth should be cleared because last login was yesterday
+      expect(ConfigService.isLoggedIn, isFalse);
+      expect(ConfigService.token, isNull);
+      expect(ConfigService.userData, isNull);
+      expect(ConfigService.lastLoginDate, isNull);
     });
 
-    test('returns <1 minute when called at 23:59:30', () {
-      final now = DateTime(2026, 11, 4, 23, 59, 30);
-      final delay = durationUntilNextMidnight(now);
-      expect(delay.inSeconds, 30);
+    test('init keeps auth when last login was today', () async {
+      // Simulate a login from today
+      final today = DateTime.now();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_login_date', today.toIso8601String());
+      await prefs.setString('user_data', '{"name": "Sangam"}');
+      SecureStorageService.instance.writeToken('valid-token');
+
+      await ConfigService.init();
+
+      // Auth should be preserved because last login was today
+      expect(ConfigService.isLoggedIn, isTrue);
+      expect(ConfigService.token, 'valid-token');
     });
 
-    test('works correctly across month boundary', () {
-      final now = DateTime(2026, 10, 31, 23, 0, 0); // 23:00 on Oct 31
-      final delay = durationUntilNextMidnight(now);
-      expect(delay.inMinutes, 60);
+    test('init keeps auth when no last login date exists', () async {
+      // Fresh install, no last login date
+      SecureStorageService.instance.writeToken('valid-token');
+
+      await ConfigService.init();
+
+      expect(ConfigService.isLoggedIn, isTrue);
     });
 
-    test('works correctly across year boundary (Dec 31)', () {
-      final now = DateTime(2026, 12, 31, 20, 0, 0); // 20:00 on Dec 31
-      final delay = durationUntilNextMidnight(now);
-      expect(delay.inHours, 4);
+    test('init clears auth when last login was two days ago', () async {
+      final twoDaysAgo = DateTime.now().subtract(const Duration(days: 2));
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_login_date', twoDaysAgo.toIso8601String());
+      await prefs.setString('user_data', '{"name": "Sangam"}');
+      SecureStorageService.instance.writeToken('old-token');
+
+      await ConfigService.init();
+
+      expect(ConfigService.isLoggedIn, isFalse);
+      expect(ConfigService.token, isNull);
     });
 
-    // ── hasDateChanged ─────────────────────────────────────────────────────
+    test('init clears auth across month boundary', () async {
+      // Simulate login on last day of previous month
+      final now = DateTime.now();
+      final firstOfMonth = DateTime(now.year, now.month, 1);
+      final lastDayPrevMonth = firstOfMonth.subtract(const Duration(days: 1));
 
-    test('returns false when same day', () {
-      final start = DateTime(2026, 11, 4, 9, 0);
-      final now = DateTime(2026, 11, 4, 22, 0);
-      expect(hasDateChanged(start, now), isFalse);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_login_date', lastDayPrevMonth.toIso8601String());
+      await prefs.setString('user_data', '{"name": "Sangam"}');
+      SecureStorageService.instance.writeToken('old-token');
+
+      await ConfigService.init();
+
+      expect(ConfigService.isLoggedIn, isFalse);
+      expect(ConfigService.token, isNull);
     });
 
-    test('returns true when day has advanced by 1', () {
-      final start = DateTime(2026, 11, 4, 23, 50);
-      final now = DateTime(2026, 11, 5, 0, 5); // next day
-      expect(hasDateChanged(start, now), isTrue);
-    });
+    test('init clears auth across year boundary', () async {
+      // Simulate login on Dec 31 of previous year
+      final now = DateTime.now();
+      final dec31PrevYear = DateTime(now.year - 1, 12, 31);
 
-    test('returns true when phone was left on for multiple days', () {
-      final start = DateTime(2026, 11, 1, 10, 0);
-      final now = DateTime(2026, 11, 4, 8, 0); // 3 days later
-      expect(hasDateChanged(start, now), isTrue);
-    });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_login_date', dec31PrevYear.toIso8601String());
+      await prefs.setString('user_data', '{"name": "Sangam"}');
+      SecureStorageService.instance.writeToken('old-token');
 
-    test('returns true across month boundary', () {
-      final start = DateTime(2026, 10, 31, 23, 50);
-      final now = DateTime(2026, 11, 1, 0, 1);
-      expect(hasDateChanged(start, now), isTrue);
-    });
+      await ConfigService.init();
 
-    test('returns true across year boundary', () {
-      final start = DateTime(2026, 12, 31, 23, 55);
-      final now = DateTime(2027, 1, 1, 0, 1);
-      expect(hasDateChanged(start, now), isTrue);
-    });
-
-    // ── Timer fires at correct delay ───────────────────────────────────────
-
-    test('a fake timer fires after the computed delay', () async {
-      final now = DateTime(2026, 11, 4, 23, 59, 59); // 1 second before midnight
-      final delay = durationUntilNextMidnight(now);
-
-      // Verify the delay calculation is as expected (1 second)
-      expect(delay.inSeconds, 1);
-
-      // Verify that after the delay the next midnight date is correct
-      final expectedMidnight = DateTime(2026, 11, 5, 0, 0, 0);
-      expect(now.add(delay), equals(expectedMidnight));
+      expect(ConfigService.isLoggedIn, isFalse);
+      expect(ConfigService.token, isNull);
     });
   });
 }
-
-// ---------------------------------------------------------------------------
-// Minimal clock helper (avoids a dependency on package:clock)
-// ---------------------------------------------------------------------------
-
-class Clock {
-  final DateTime Function() _now;
-  Clock._(this._now);
-  factory Clock.fixed(DateTime t) => Clock._(() => t);
-  DateTime call() => _now();
-}
-
-Future<T> withClock<T>(Clock clock, Future<T> Function() fn) => fn();
