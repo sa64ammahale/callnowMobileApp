@@ -9,6 +9,7 @@ import 'package:callnow_new/services/followup_service.dart';
 import 'package:callnow_new/services/notification_service.dart';
 import 'package:callnow_new/services/permission_service.dart';
 import 'package:callnow_new/services/engagement_service.dart';
+import 'package:callnow_new/services/pending_call_recovery_service.dart';
 import 'package:callnow_new/widgets/callback_alert_dialog.dart';
 import 'package:callnow_new/widgets/incoming_call_action_dialog.dart';
 import 'package:callnow_new/screens/calling_desk_screen.dart';
@@ -766,21 +767,30 @@ class _DashboardPageState extends State<DashboardPage> {
                         const SizedBox(height: 16),
                         SizedBox(
                           width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: widget.onStartCalling,
-                            icon: const Icon(Icons.phone_in_talk, size: 20),
-                            label: const Text(
-                              'Start Calling Session',
-                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                            ),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: const Color(0xFF1E3C72),
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
+                          child: FutureBuilder<bool>(
+                            future: PendingCallRecoveryService.hasPendingCall(),
+                            builder: (context, snapshot) {
+                              final hasPending = snapshot.data == true;
+                              return FilledButton.icon(
+                                onPressed: widget.onStartCalling,
+                                icon: Icon(
+                                  hasPending ? Icons.history_toggle_off_rounded : Icons.phone_in_talk,
+                                  size: 20,
+                                ),
+                                label: Text(
+                                  hasPending ? 'Resume Pending Call Outcome' : 'Start Calling Session',
+                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                ),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: hasPending ? const Color(0xFFFEF3C7) : Colors.white,
+                                  foregroundColor: hasPending ? const Color(0xFFB45309) : const Color(0xFF1E3C72),
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              );
+                            },
                           ),
                         ),
                       ],

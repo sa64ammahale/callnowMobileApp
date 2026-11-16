@@ -8,6 +8,7 @@ import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/calling_preferences_service.dart';
 import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
+import 'package:callnow_new/services/pending_call_recovery_service.dart';
 import 'package:callnow_new/services/whatsapp_message_service.dart';
 
 class CallingDeskScreen extends StatefulWidget {
@@ -75,6 +76,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   VerifiedCallLog? _verifiedCallLog;
   bool _isCheckingCallLog = false;
   bool _showOutcomes = false;
+  bool _isRestoredFromPending = false;
 
   // Current lead form state
   String _selectedDisposition = 'RINGING';
@@ -176,6 +178,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     ConfigService.registerLogoutCallback(CallingDeskScreen.clearSessionProcessedLeads);
+    ConfigService.registerLogoutCallback(PendingCallRecoveryService.clearPendingCall);
     _startInactivityTimer();
     _loadInitialBatch();
     CallTrackingService.activeCallSession.addListener(_onCallSessionDetected);
@@ -216,6 +219,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
 
   @visibleForTesting
   Future<void> skipLeadForTesting() => _skipLead();
+
+  @visibleForTesting
+  bool get isRestoredFromPending => _isRestoredFromPending;
 
   @override
   void dispose() {
@@ -353,25 +359,58 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       _errorMessage = null;
     });
 
+    Map<String, dynamic>? pendingLead;
+    if (!force) {
+      try {
+        pendingLead = await PendingCallRecoveryService.getPendingCall();
+      } catch (_) {}
+    }
+
     try {
       final batch = await ApiService.getBatchLeads(limit: 15);
+      final pendingId = pendingLead != null ? CallingDeskScreen.getLeadIdentifier(pendingLead) : '';
       final freshBatch = batch.where((item) {
         final id = CallingDeskScreen.getLeadIdentifier(item);
+        if (pendingId.isNotEmpty && id == pendingId) return false;
         return id.isEmpty || !CallingDeskScreen._sessionProcessedLeadIds.contains(id);
       }).toList();
 
       if (mounted) {
         setState(() {
           _leads.clear();
+          if (pendingLead != null) {
+            _leads.add(pendingLead);
+            _isRestoredFromPending = true;
+          } else {
+            _isRestoredFromPending = false;
+          }
           _leads.addAll(freshBatch);
           _currentIndex = 0;
           _isLoading = false;
           _bucketFilledAt = DateTime.now(); // Mark when this 15-call bucket was filled
           _resetFormForCurrentLead();
+          if (_isRestoredFromPending) {
+            _showOutcomes = true;
+          }
         });
+
+        if (pendingLead != null) {
+          _verifyCallWithAndroidLog();
+        }
       }
     } catch (e) {
-      if (mounted) {
+      if (pendingLead != null && mounted) {
+        setState(() {
+          _leads.clear();
+          _leads.add(pendingLead!);
+          _isRestoredFromPending = true;
+          _currentIndex = 0;
+          _isLoading = false;
+          _resetFormForCurrentLead();
+          _showOutcomes = true;
+        });
+        _verifyCallWithAndroidLog();
+      } else if (mounted) {
         setState(() {
           _isLoading = false;
           _errorMessage = e.toString().replaceAll('Exception: ', '');
@@ -651,8 +690,13 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       Clipboard.setData(ClipboardData(text: mobile));
     }
 
+    // Persist this lead immediately to survive low-RAM background process termination
+    await PendingCallRecoveryService.savePendingCall(lead);
+
     final launched = await CallTrackingService.makePhoneCall(mobile);
-    if (!launched && mounted) {
+    if (!launched) {
+      await PendingCallRecoveryService.clearPendingCall();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not open phone dialer.')),
       );
@@ -818,9 +862,11 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
 
     final leadId = CallingDeskScreen.getLeadIdentifier(lead);
     CallingDeskScreen.markLeadProcessed(leadId);
+    await PendingCallRecoveryService.clearPendingCall();
 
     if (_currentIndex + 1 < _leads.length) {
       setState(() {
+        _isRestoredFromPending = false;
         _currentIndex++;
         _resetFormForCurrentLead();
       });
@@ -830,6 +876,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       }
     } else {
       setState(() {
+        _isRestoredFromPending = false;
         _currentIndex++;
         _resetFormForCurrentLead();
       });
@@ -1047,6 +1094,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       if (mounted) {
         final leadIdentifier = CallingDeskScreen.getLeadIdentifier(lead);
         CallingDeskScreen.markLeadProcessed(leadIdentifier);
+        await PendingCallRecoveryService.clearPendingCall();
 
         final followupNotice = _followupDateTime != null
             ? ' (⏰ Callback set for ${_followupDateTime!.day}/${_followupDateTime!.month} ${_followupDateTime!.hour.toString().padLeft(2, '0')}:${_followupDateTime!.minute.toString().padLeft(2, '0')})'
@@ -1058,6 +1106,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
         );
 
         setState(() {
+          _isRestoredFromPending = false;
           _isSubmitting = false;
           _currentIndex++;
           _resetFormForCurrentLead();
@@ -1403,6 +1452,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                                   if (mounted) {
                                     final leadIdentifier = CallingDeskScreen.getLeadIdentifier(leadData);
                                     CallingDeskScreen.markLeadProcessed(leadIdentifier);
+                                    await PendingCallRecoveryService.clearPendingCall();
 
                                     _showEngagementFeedback(
                                       result,
@@ -1410,6 +1460,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                                     );
 
                                     setState(() {
+                                      _isRestoredFromPending = false;
                                       _isSubmitting = false;
                                       _currentIndex++;
                                       _resetFormForCurrentLead();
@@ -1669,6 +1720,34 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // ── Restored dialed call banner for low-RAM recovery ──────────────
+        if (_isRestoredFromPending && _currentIndex == 0)
+          Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF3C7),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFF59E0B)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.restore, color: Color(0xFFB45309), size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Dialed contact restored. Please select call outcome and save.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF92400E),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
         // ── Lead counter + call-status badge row ──────────────────────────
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
