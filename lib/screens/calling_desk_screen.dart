@@ -4,6 +4,7 @@ import 'package:callnow_new/constants/lead_stages.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
+import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
 import 'package:callnow_new/services/whatsapp_message_service.dart';
 
@@ -11,11 +12,33 @@ class CallingDeskScreen extends StatefulWidget {
   final VoidCallback? onOpenReports;
   const CallingDeskScreen({super.key, this.onOpenReports});
 
+  static final Set<String> _sessionProcessedLeadIds = {};
+
+  @visibleForTesting
+  static void clearSessionProcessedLeads() => _sessionProcessedLeadIds.clear();
+
+  @visibleForTesting
+  static Set<String> get sessionProcessedLeadIds => Set.unmodifiable(_sessionProcessedLeadIds);
+
+  static void markLeadProcessed(String id) {
+    if (id.isNotEmpty) _sessionProcessedLeadIds.add(id);
+  }
+
+  static String getLeadIdentifier(Map<String, dynamic> lead) {
+    final id = lead['id']?.toString().trim();
+    if (id != null && id.isNotEmpty && id != '0') return id;
+    final leadId = lead['lead_id']?.toString().trim();
+    if (leadId != null && leadId.isNotEmpty && leadId != '0') return leadId;
+    final mobile = lead['mobile']?.toString().trim();
+    if (mobile != null && mobile.isNotEmpty) return mobile;
+    return '';
+  }
+
   @override
-  State<CallingDeskScreen> createState() => _CallingDeskScreenState();
+  State<CallingDeskScreen> createState() => CallingDeskScreenState();
 }
 
-class _CallingDeskScreenState extends State<CallingDeskScreen>
+class CallingDeskScreenState extends State<CallingDeskScreen>
     with WidgetsBindingObserver {
   final List<Map<String, dynamic>> _leads = [];
   int _currentIndex = 0;
@@ -121,10 +144,40 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    ConfigService.registerLogoutCallback(CallingDeskScreen.clearSessionProcessedLeads);
     _startInactivityTimer();
     _loadInitialBatch();
     CallTrackingService.activeCallSession.addListener(_onCallSessionDetected);
   }
+
+  @visibleForTesting
+  List<Map<String, dynamic>> get leads => _leads;
+
+  @visibleForTesting
+  int get currentIndex => _currentIndex;
+
+  @visibleForTesting
+  String get selectedDisposition => _selectedDisposition;
+
+  @visibleForTesting
+  TextEditingController get notesController => _notesController;
+
+  @visibleForTesting
+  Future<void> refreshBatchForTesting() => _refreshBatch();
+
+  @visibleForTesting
+  void setVerifiedCallLogForTesting(VerifiedCallLog? log) {
+    setState(() {
+      _verifiedCallLog = log;
+      _showOutcomes = log != null;
+      if (log != null) {
+        _durationSeconds = log.durationSeconds;
+      }
+    });
+  }
+
+  @visibleForTesting
+  Future<void> skipLeadForTesting() => _skipLead();
 
   @override
   void dispose() {
@@ -247,6 +300,12 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
       return;
     }
 
+    // If forced refresh but we have an active lead in-progress, delegate to _refreshBatch to preserve state
+    if (force && _currentLead != null) {
+      await _refreshBatch();
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -254,18 +313,109 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
 
     try {
       final batch = await ApiService.getBatchLeads(limit: 15);
-      setState(() {
-        _leads.clear();
-        _leads.addAll(batch);
-        _currentIndex = 0;
-        _isLoading = false;
-        _resetFormForCurrentLead();
-      });
+      final freshBatch = batch.where((item) {
+        final id = CallingDeskScreen.getLeadIdentifier(item);
+        return id.isEmpty || !CallingDeskScreen._sessionProcessedLeadIds.contains(id);
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          _leads.clear();
+          _leads.addAll(freshBatch);
+          _currentIndex = 0;
+          _isLoading = false;
+          _resetFormForCurrentLead();
+        });
+      }
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = e.toString().replaceAll('Exception: ', '');
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = e.toString().replaceAll('Exception: ', '');
+        });
+      }
+    }
+  }
+
+  Future<void> _refreshBatch() async {
+    // If no lead is currently active (e.g. empty queue or initial error), load fresh batch
+    if (_currentLead == null) {
+      await _loadInitialBatch(force: true);
+      return;
+    }
+
+    try {
+      final batch = await ApiService.getBatchLeads(limit: 15);
+
+      final existingIdentifiers = <String>{};
+      for (final l in _leads) {
+        final id = CallingDeskScreen.getLeadIdentifier(l);
+        if (id.isNotEmpty) existingIdentifiers.add(id);
+      }
+
+      final newLeads = batch.where((lead) {
+        final id = CallingDeskScreen.getLeadIdentifier(lead);
+        if (id.isEmpty) return true;
+        return !CallingDeskScreen._sessionProcessedLeadIds.contains(id) &&
+            !existingIdentifiers.contains(id);
+      }).toList();
+
+      if (mounted) {
+        if (newLeads.isNotEmpty) {
+          setState(() {
+            _leads.addAll(newLeads);
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_outline, color: Colors.white, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${newLeads.length} new contact${newLeads.length > 1 ? 's' : ''} added to queue. Current call preserved.',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: const Color(0xFF0F766E),
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Queue is up to date. Current call preserved.',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Color(0xFF334155),
+              behavior: SnackBarBehavior.floating,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to check for new contacts: ${e.toString().replaceAll('Exception: ', '')}'),
+            backgroundColor: Colors.red.shade700,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
@@ -276,8 +426,20 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     try {
       final batch = await ApiService.getBatchLeads(limit: 15);
       if (mounted) {
+        final existingIdentifiers = <String>{};
+        for (final l in _leads) {
+          final id = CallingDeskScreen.getLeadIdentifier(l);
+          if (id.isNotEmpty) existingIdentifiers.add(id);
+        }
+        final newLeads = batch.where((lead) {
+          final id = CallingDeskScreen.getLeadIdentifier(lead);
+          if (id.isEmpty) return true;
+          return !CallingDeskScreen._sessionProcessedLeadIds.contains(id) &&
+              !existingIdentifiers.contains(id);
+        }).toList();
+
         setState(() {
-          _leads.addAll(batch);
+          _leads.addAll(newLeads);
           _isFetchingMore = false;
         });
       }
@@ -537,7 +699,55 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
     );
   }
 
-  void _skipLead() {
+  Future<void> _skipLead() async {
+    final lead = _currentLead;
+    if (lead == null) return;
+
+    final bool isDialed = _verifiedCallLog != null && _verifiedCallLog!.isDialed;
+    final bool hasNotes = _notesController.text.trim().isNotEmpty;
+
+    if (isDialed || hasNotes) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Color(0xFFF59E0B), size: 24),
+              SizedBox(width: 8),
+              Text('Discard Call Details?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: Text(
+            isDialed
+                ? 'You placed a call (${_durationSeconds}s) to this contact. Skipping without submitting will discard the call record for this session. Are you sure you want to skip?'
+                : 'You have entered notes for this contact. Skipping will discard your notes. Are you sure you want to skip?',
+            style: const TextStyle(fontSize: 14, color: Color(0xFF334155)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFEF4444),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Discard & Skip'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed != true) return;
+    }
+
+    final leadId = CallingDeskScreen.getLeadIdentifier(lead);
+    CallingDeskScreen.markLeadProcessed(leadId);
+
     if (_currentIndex + 1 < _leads.length) {
       setState(() {
         _currentIndex++;
@@ -548,6 +758,10 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         _fetchMoreLeads();
       }
     } else {
+      setState(() {
+        _currentIndex++;
+        _resetFormForCurrentLead();
+      });
       _loadInitialBatch(force: true);
     }
   }
@@ -690,6 +904,9 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
       );
 
       if (mounted) {
+        final leadIdentifier = CallingDeskScreen.getLeadIdentifier(lead);
+        CallingDeskScreen.markLeadProcessed(leadIdentifier);
+
         final followupNotice = _followupDateTime != null
             ? ' (⏰ Callback set for ${_followupDateTime!.day}/${_followupDateTime!.month} ${_followupDateTime!.hour.toString().padLeft(2, '0')}:${_followupDateTime!.minute.toString().padLeft(2, '0')})'
             : '';
@@ -1045,6 +1262,9 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
                                   if (modalCtx.mounted) Navigator.pop(modalCtx);
 
                                   if (mounted) {
+                                    final leadIdentifier = CallingDeskScreen.getLeadIdentifier(leadData);
+                                    CallingDeskScreen.markLeadProcessed(leadIdentifier);
+
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: Row(
@@ -1264,7 +1484,7 @@ class _CallingDeskScreenState extends State<CallingDeskScreen>
         }
       },
       child: RefreshIndicator(
-        onRefresh: () => _loadInitialBatch(force: true),
+        onRefresh: _refreshBatch,
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 8.0),

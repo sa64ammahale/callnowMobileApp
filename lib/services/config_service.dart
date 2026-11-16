@@ -323,6 +323,17 @@ class ConfigService {
     _cachedUserData = merged;
   }
 
+  static final List<void Function()> _onLogoutCallbacks = [];
+
+  static void registerLogoutCallback(void Function() cb) {
+    if (!_onLogoutCallbacks.contains(cb)) {
+      _onLogoutCallbacks.add(cb);
+    }
+  }
+
+  @visibleForTesting
+  static void clearLogoutCallbacks() => _onLogoutCallbacks.clear();
+
   static Future<void> clearAuthData({bool clearCompanyCode = false}) async {
     final prefs = await SharedPreferences.getInstance();
     final savedCompany = _cachedCompanyCode;
@@ -340,6 +351,11 @@ class ConfigService {
       _cachedCompanyCode = savedCompany;
     }
     FollowupService.instance.clearLocalCache();
+    for (final cb in List<void Function()>.from(_onLogoutCallbacks)) {
+      try {
+        cb();
+      } catch (_) {}
+    }
   }
 
   static String get defaultBaseUrl => _defaultBaseUrl;
