@@ -42,22 +42,23 @@ class PhoneStateBackgroundListener internal constructor(
     @RequiresApi(Build.VERSION_CODES.O)
     @Synchronized
     override fun onCallStateChanged(state: Int, incomingNumber: String?) {
+        val safeNumber = incomingNumber ?: ""
         when (state) {
             TelephonyManager.CALL_STATE_IDLE -> {
                 val duration = Duration.between(time ?: ZonedDateTime.now(), ZonedDateTime.now())
 
                 if (previousState == TelephonyManager.CALL_STATE_OFFHOOK && callType == CallType.INCOMING) {
                     // Incoming call ended
-                    Log.d(PhoneStateBackgroundPlugin.PLUGIN_NAME, "Phone State event IDLE (INCOMING ENDED) with number - $incomingNumber")
-                    notifyFlutterEngine(CallEvent.INCOMINGEND, duration.toMillis() / 1000, incomingNumber!!)
+                    Log.d(PhoneStateBackgroundPlugin.PLUGIN_NAME, "Phone State event IDLE (INCOMING ENDED) with number - $safeNumber")
+                    notifyFlutterEngine(CallEvent.INCOMINGEND, duration.toMillis() / 1000, safeNumber)
                 } else if(callType == CallType.OUTGOING) {
                     // Outgoing call ended
-                    Log.d(PhoneStateBackgroundPlugin.PLUGIN_NAME, "Phone State event IDLE (OUTGOING ENDED) with number - $incomingNumber")
-                    notifyFlutterEngine(CallEvent.OUTGOINGEND, duration.toMillis() / 1000, incomingNumber!!)
+                    Log.d(PhoneStateBackgroundPlugin.PLUGIN_NAME, "Phone State event IDLE (OUTGOING ENDED) with number - $safeNumber")
+                    notifyFlutterEngine(CallEvent.OUTGOINGEND, duration.toMillis() / 1000, safeNumber)
                 }
                 else {
-                    Log.d(PhoneStateBackgroundPlugin.PLUGIN_NAME, "Phone State event IDLE (INCOMING MISSED) with number - $incomingNumber")
-                    notifyFlutterEngine(CallEvent.INCOMINGMISSED, 0, incomingNumber!!)
+                    Log.d(PhoneStateBackgroundPlugin.PLUGIN_NAME, "Phone State event IDLE (INCOMING MISSED) with number - $safeNumber")
+                    notifyFlutterEngine(CallEvent.INCOMINGMISSED, 0, safeNumber)
                 }
 
                 callType = null
@@ -74,17 +75,17 @@ class PhoneStateBackgroundListener internal constructor(
                 previousState = TelephonyManager.CALL_STATE_OFFHOOK
 
                 if(callType == CallType.OUTGOING){
-                   notifyFlutterEngine(CallEvent.OUTGOINGSTART,0, incomingNumber!!)
+                   notifyFlutterEngine(CallEvent.OUTGOINGSTART, 0, safeNumber)
                 }
                 else {
-                    notifyFlutterEngine(CallEvent.INCOMINGRECEIVED,0, incomingNumber!!)
+                    notifyFlutterEngine(CallEvent.INCOMINGRECEIVED, 0, safeNumber)
                 }
             }
             TelephonyManager.CALL_STATE_RINGING -> {
-                Log.d(PhoneStateBackgroundPlugin.PLUGIN_NAME, "Phone State event PHONE_RINGING number: $incomingNumber")
+                Log.d(PhoneStateBackgroundPlugin.PLUGIN_NAME, "Phone State event PHONE_RINGING number: $safeNumber")
                 callType = CallType.INCOMING
                 previousState = TelephonyManager.CALL_STATE_RINGING
-                notifyFlutterEngine(CallEvent.INCOMINGSTART,0, incomingNumber!!)
+                notifyFlutterEngine(CallEvent.INCOMINGSTART, 0, safeNumber)
             }
         }
     }

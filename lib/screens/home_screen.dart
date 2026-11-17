@@ -8,6 +8,7 @@ import 'package:callnow_new/services/config_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
 import 'package:callnow_new/services/notification_service.dart';
 import 'package:callnow_new/services/permission_service.dart';
+import 'package:callnow_new/services/today_dialed_history_service.dart';
 import 'package:callnow_new/services/engagement_service.dart';
 import 'package:callnow_new/services/pending_call_recovery_service.dart';
 import 'package:callnow_new/widgets/callback_alert_dialog.dart';
@@ -43,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _sessionStartDate = DateTime.now();
     _initCallTracker();
     _scheduleMidnightLogout();
+    TodayDialedHistoryService.instance.syncWithServer();
     // Listen to push notification clicks
     _notificationSub = NotificationService.onNotificationTap.listen((payload) {
       if (payload != null && mounted) {
@@ -87,6 +89,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           final number = (log['number'] ?? log['cleanNumber'] ?? '').toString();
 
           if (isIncoming && duration > 0 && number.isNotEmpty) {
+            // STRICT FILTER: Only detect incoming calls that exist in Today's Dialed Call History!
+            // Personal calls (wife, family, personal contacts) are NOT in Today's Dialed History,
+            // so they are strictly ignored.
+            final wasDialed = await TodayDialedHistoryService.instance.wasDialedToday(number);
+            if (!wasDialed) {
+              continue; // Skip personal calls completely!
+            }
+
             final key = '${number}_$timestamp';
             final alreadyProcessed = await CallTrackingService.isCallProcessed(key);
             if (!alreadyProcessed) {
@@ -109,8 +119,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         final direction = pending['direction']?.toString() ?? 'INCOMING';
 
         if (number.isNotEmpty) {
-          // Lookup contact info from CRM
-          final contactData = await ApiService.lookupContact(number);
+          // Verify against SQLite Today's Dialed History
+          final dialedLead = await TodayDialedHistoryService.instance.findDialedCall(number);
+          if (dialedLead == null) {
+            // Not in today's dialed history (e.g. personal call). Silently discard!
+            await CallTrackingService.clearPendingPostCall();
+            return;
+          }
+
+          // Lookup contact info from CRM or use dialedLead from SQLite
+          Map<String, dynamic>? contactData = await ApiService.lookupContact(number);
+          contactData ??= {
+            'record_id': dialedLead['record_id'],
+            'lead_id': dialedLead['lead_id'],
+            'name': dialedLead['name'],
+            'company': dialedLead['company'],
+            'source_type': dialedLead['source'],
+            'status': dialedLead['status'],
+          };
+
           if (mounted) {
             await IncomingCallActionDialog.show(
               context,

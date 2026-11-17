@@ -61,6 +61,33 @@ class PendingCallRecoveryService {
     return pending != null;
   }
 
+  /// Returns the timestamp when the pending call was dialed, or null.
+  static Future<DateTime?> getPendingCallDialedTime() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final timestamp = prefs.getInt(_prefKeyPendingTime);
+      if (timestamp != null) {
+        return DateTime.fromMillisecondsSinceEpoch(timestamp);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Helper to reliably extract lead ID from lead maps
+  static int extractLeadId(Map<String, dynamic> lead) {
+    final raw = lead['id'] ?? lead['lead_id'] ?? lead['record_id'] ?? lead['ID'] ?? lead['cust_id'];
+    return int.tryParse(raw?.toString() ?? '0') ?? 0;
+  }
+
+  /// Helper to reliably extract and normalize source ('TEMP' or 'MAIN')
+  static String extractSource(Map<String, dynamic> lead) {
+    final raw = (lead['source'] ?? lead['source_type'] ?? lead['SOURCE'] ?? 'TEMP').toString().trim().toUpperCase();
+    if (raw == 'TEMPORARY' || raw == 'TEMP') return 'TEMP';
+    if (raw == 'MAIN' || raw == 'CLIENT_DATA') return 'MAIN';
+    if (raw == 'LEAD' || raw == 'CRM') return 'LEAD';
+    return raw.isNotEmpty ? raw : 'TEMP';
+  }
+
   /// Clears the pending call after the user successfully submits or skips the call.
   static Future<void> clearPendingCall() async {
     try {

@@ -110,6 +110,14 @@ class _IncomingCallActionDialogState extends State<IncomingCallActionDialog> {
       final recordId = (cData?['record_id'] as num?)?.toInt() ?? 0;
       final source = (cData?['source_type']?.toString().toUpperCase() == 'TEMP') ? 'TEMP' : 'MAIN';
 
+      if (recordId <= 0) {
+        setState(() {
+          _isSubmitting = false;
+          _errorMessage = 'Cannot update status: No valid CRM record found for this number.';
+        });
+        return;
+      }
+
       await ApiService.submitCallResult(
         callId: recordId,
         source: source,
@@ -160,6 +168,14 @@ class _IncomingCallActionDialogState extends State<IncomingCallActionDialog> {
       final cData = widget.contactData;
       final recordId = (cData?['record_id'] as num?)?.toInt() ?? 0;
       final source = (cData?['source_type']?.toString().toUpperCase() == 'TEMP') ? 'TEMP' : 'MAIN';
+
+      if (recordId <= 0) {
+        setState(() {
+          _isSubmitting = false;
+          _errorMessage = 'Cannot update status: No valid CRM record found for this number.';
+        });
+        return;
+      }
       final finalBank = _selectedBank == 'Other Bank'
           ? _leadCustomBankController.text.trim()
           : _selectedBank;
@@ -224,6 +240,14 @@ class _IncomingCallActionDialogState extends State<IncomingCallActionDialog> {
       final recordId = (cData?['record_id'] as num?)?.toInt();
       final leadId = (cData?['lead_id'] as num?)?.toInt();
       final source = (cData?['source_type']?.toString().toUpperCase() == 'TEMP') ? 'TEMP' : 'MAIN';
+
+      if ((recordId == null || recordId <= 0) && (leadId == null || leadId <= 0)) {
+        setState(() {
+          _isSubmitting = false;
+          _errorMessage = 'Cannot schedule follow-up: No valid CRM record found for this number.';
+        });
+        return;
+      }
 
       await ApiService.createServerFollowup(
         leadId: leadId,

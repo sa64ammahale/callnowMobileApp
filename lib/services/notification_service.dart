@@ -164,15 +164,29 @@ class NotificationService {
         'scheduled_time': followup.scheduledTime.toIso8601String(),
       };
 
-      await _flutterLocalNotificationsPlugin.zonedSchedule(
-        id: id,
-        title: '📞 Callback: ${followup.customerName}',
-        body: '${followup.phoneNumber} • ${followup.notes.isNotEmpty ? followup.notes : "Call scheduled for this time"}',
-        scheduledDate: scheduledDate,
-        notificationDetails: notificationDetails,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        payload: jsonEncode(payloadMap),
-      );
+      try {
+        await _flutterLocalNotificationsPlugin.zonedSchedule(
+          id: id,
+          title: '📞 Callback: ${followup.customerName}',
+          body: '${followup.phoneNumber} • ${followup.notes.isNotEmpty ? followup.notes : "Call scheduled for this time"}',
+          scheduledDate: scheduledDate,
+          notificationDetails: notificationDetails,
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          payload: jsonEncode(payloadMap),
+        );
+      } catch (scheduleError) {
+        // Fallback for Android 12-14+ if SCHEDULE_EXACT_ALARM permission is revoked
+        debugPrint('[NotificationService] Exact alarm failed ($scheduleError). Falling back to inexact alarm.');
+        await _flutterLocalNotificationsPlugin.zonedSchedule(
+          id: id,
+          title: '📞 Callback: ${followup.customerName}',
+          body: '${followup.phoneNumber} • ${followup.notes.isNotEmpty ? followup.notes : "Call scheduled for this time"}',
+          scheduledDate: scheduledDate,
+          notificationDetails: notificationDetails,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          payload: jsonEncode(payloadMap),
+        );
+      }
     } catch (e) {
       debugPrint('Error scheduling notification: $e');
     }

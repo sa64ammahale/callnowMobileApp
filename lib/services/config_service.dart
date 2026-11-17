@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/model/user_profile.dart';
 import 'package:callnow_new/services/secure_storage_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
+import 'package:callnow_new/services/today_dialed_history_service.dart';
 
 class ConfigService {
   static final ValueNotifier<int> profileNotifier = ValueNotifier<int>(0);
@@ -57,6 +58,7 @@ class ConfigService {
             await prefs.remove(_companyCodeKey);
             await prefs.remove(_lastLoginDateKey);
             FollowupService.instance.clearLocalCache();
+            await TodayDialedHistoryService.instance.clearAll();
             _cachedBaseUrl = prefs.getString(_baseUrlKey) ?? _defaultBaseUrl;
             _initialized = true;
             return;
@@ -416,6 +418,7 @@ class ConfigService {
       _cachedCompanyCode = savedCompany;
     }
     FollowupService.instance.clearLocalCache();
+    await TodayDialedHistoryService.instance.clearAll();
     for (final cb in List<void Function()>.from(_onLogoutCallbacks)) {
       try {
         cb();

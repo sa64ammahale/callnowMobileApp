@@ -7,8 +7,10 @@ import 'package:phone_state_background/phone_state_background.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:callnow_new/services/config_service.dart';
+import 'package:callnow_new/services/notification_service.dart';
 import 'package:callnow_new/services/permission_service.dart';
 import 'package:callnow_new/services/secure_http_client.dart';
+import 'package:callnow_new/services/today_dialed_history_service.dart';
 
 /// Model representing verified Android CallLog entry for a dialed number
 class VerifiedCallLog {
@@ -115,12 +117,10 @@ Future<void> phoneStateBackgroundCallbackHandler(
     case PhoneStateBackgroundEvent.outgoingend:
       log('[CallTracker] Outgoing call ended to: $number, duration: $duration s');
       CallTrackingService.markCallEnded(number, duration);
-      await CallTrackingService._syncCallActivityBackground(
-        number: number,
-        duration: duration,
-        direction: 'OUTGOING',
-        status: duration > 0 ? 'Connected' : 'Missed/Cancelled',
-      );
+      // NOTE: We do not auto-sync outgoing calls to the backend from the background listener.
+      // Outgoing calls are initiated from Calling Desk and strictly verified & submitted via
+      // CallingDeskScreen._submitAndNext() with user-selected disposition and remarks.
+      // Auto-syncing in background caused duplicate CRM submissions and leaked personal calls.
       break;
 
     case PhoneStateBackgroundEvent.incomingstart:
@@ -133,31 +133,33 @@ Future<void> phoneStateBackgroundCallbackHandler(
 
     case PhoneStateBackgroundEvent.incomingmissed:
       log('[CallTracker] Incoming call missed from: $number');
-      await CallTrackingService._syncCallActivityBackground(
-        number: number,
-        duration: 0,
-        direction: 'INCOMING',
-        status: 'Missed',
-      );
       break;
 
     case PhoneStateBackgroundEvent.incomingend:
       log('[CallTracker] Incoming call ended from: $number, duration: $duration s');
       if (duration > 0 && number.isNotEmpty) {
-        try {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('pending_post_call_number', number);
-          await prefs.setInt('pending_post_call_duration', duration);
-          await prefs.setString('pending_post_call_direction', 'INCOMING');
-          await prefs.setInt('pending_post_call_time', DateTime.now().millisecondsSinceEpoch);
-        } catch (_) {}
+        // Strict check: Only store pending post-call if number was dialed today!
+        final wasDialed = await TodayDialedHistoryService.instance.wasDialedToday(number);
+        if (wasDialed) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('pending_post_call_number', number);
+            await prefs.setInt('pending_post_call_duration', duration);
+            await prefs.setString('pending_post_call_direction', 'INCOMING');
+            await prefs.setInt('pending_post_call_time', DateTime.now().millisecondsSinceEpoch);
+
+            // Trigger high priority customer callback alert notification
+            final lead = await TodayDialedHistoryService.instance.findDialedCall(number);
+            final customerName = lead?['name']?.toString() ?? 'Customer';
+            await NotificationService.showInstantAlert(
+              title: '📞 Customer Callback Received',
+              body: 'Callback from $customerName ($number) connected (${duration}s). Open app to update lead status.',
+            );
+          } catch (_) {}
+        } else {
+          log('[CallTracker] Incoming call from $number ignored (not in Today\'s Dialed History).');
+        }
       }
-      await CallTrackingService._syncCallActivityBackground(
-        number: number,
-        duration: duration,
-        direction: 'INCOMING',
-        status: duration > 0 ? 'Incoming Connected' : 'Incoming Missed',
-      );
       break;
   }
 }
@@ -179,11 +181,16 @@ class CallTrackingService {
 
   static DateTime? _currentCallStartTime;
   static String? _currentCallNumber;
+  static DateTime? _lastDialTime;
+
+  static DateTime? get lastDialTime => _lastDialTime;
+  static int get lastDialTimestamp => _lastDialTime?.millisecondsSinceEpoch ?? 0;
 
   /// Mark outgoing call started
   static void markCallStarted(String number) {
     _currentCallNumber = number;
     _currentCallStartTime = DateTime.now();
+    _lastDialTime = _currentCallStartTime;
     lastCallEvent.value = 'CALLING ($number)';
   }
 
@@ -256,59 +263,6 @@ class CallTrackingService {
     }
   }
 
-  /// Sync call records to backend API (new submit_call.php endpoint with Bearer token)
-  static Future<void> _syncCallActivityBackground({
-    required String number,
-    required int duration,
-    required String direction,
-    required String status,
-  }) async {
-    totalCallsTracked.value++;
-    try {
-      // Read token from SharedPreferences directly (background isolate)
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('auth_token');
-      final baseUrl = prefs.getString('base_url') ?? ConfigService.defaultBaseUrl;
-
-      if (token == null) {
-        log('[CallTracker] No auth token found. Cannot sync call activity.');
-        return;
-      }
-
-      // Determine source based on number format or use a default
-      final source = _determineSource(number);
-      
-      // For the new API, we need a record_id. Since we only have the phone number,
-      // we'll use the direct submit endpoint which accepts record_id
-      // For now, we'll use a lookup approach - but the API requires record_id
-      // We'll use the phone number as record_id for temporary records, 
-      // or we can search for the record first
-      
-      final response = await _httpClient.post(
-        Uri.parse('$baseUrl/telecaller/submit_call.php'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: json.encode({
-          'phone_number': number,
-          'mobile': number,
-          'source': source.toUpperCase() == 'TEMPORARY' ? 'TEMP' : source.toUpperCase(),
-          'call_status': status,
-          'call_duration': duration,
-          'direction': direction,
-          'notes': 'Auto-logged via background call tracking ($direction${duration > 0 ? " ${duration}s" : ""})',
-          'next_followup': null,
-          'recording_url': null,
-        }),
-      );
-      log('[CallTracker] Sync response code: ${response.statusCode} - ${response.body}');
-    } catch (e) {
-      log('[CallTracker] Failed to sync call activity to API: $e');
-    }
-  }
-
   /// Determine database source from phone number format
   static String _determineSource(String number) {
     return 'MAIN';
@@ -376,6 +330,7 @@ class CallTrackingService {
     final uri = Uri(scheme: 'tel', path: cleanNumber);
     try {
       if (await canLaunchUrl(uri)) {
+        _lastDialTime = DateTime.now();
         markCallStarted(cleanNumber);
         return await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
@@ -392,10 +347,11 @@ class CallTrackingService {
 
   /// Query native Android CallLog to verify if an outgoing call was placed to [phoneNumber]
   static Future<VerifiedCallLog> verifyCallLog(String phoneNumber, {int? afterTimestamp}) async {
+    final effectiveTimestamp = afterTimestamp ?? (_lastDialTime != null ? _lastDialTime!.millisecondsSinceEpoch : 0);
     try {
       final res = await _verifierChannel.invokeMethod('getLatestCallLog', {
         'phoneNumber': phoneNumber,
-        'afterTimestamp': afterTimestamp ?? 0,
+        'afterTimestamp': effectiveTimestamp,
       });
       if (res is Map) {
         return VerifiedCallLog.fromMap(res);

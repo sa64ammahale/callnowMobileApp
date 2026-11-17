@@ -113,10 +113,17 @@ class MainActivity: FlutterActivity() {
             CallLog.Calls.DURATION
         )
 
-        // Query outgoing calls ordered by DATE DESC
-        val selection = "${CallLog.Calls.TYPE} = ?"
-        val selectionArgs = arrayOf(CallLog.Calls.OUTGOING_TYPE.toString())
+        // Query recent calls ordered by DATE DESC. Broaden beyond strict OUTGOING_TYPE filter to
+        // handle OEM variations (ColorOS, MIUI, Vivo, Samsung, VoLTE/VoWiFi, dual-SIM)
         val sortOrder = "${CallLog.Calls.DATE} DESC"
+        val minTimestamp = if (afterTimestamp > 0L) {
+            afterTimestamp - 60_000L // 60-second clock skew buffer
+        } else {
+            System.currentTimeMillis() - (15 * 60 * 1000L) // Default to within last 15 minutes
+        }
+
+        val selection = "${CallLog.Calls.DATE} >= ?"
+        val selectionArgs = arrayOf(minTimestamp.toString())
 
         var cursor: Cursor? = null
         try {
@@ -144,11 +151,29 @@ class MainActivity: FlutterActivity() {
                     val cleanNum = num.replace(Regex("[^0-9]"), "")
                     val last10Num = if (cleanNum.length >= 10) cleanNum.takeLast(10) else cleanNum
 
-                    val isMatch = (last10Target.isNotEmpty() && (last10Num == last10Target || cleanNum.endsWith(last10Target) || last10Target.endsWith(cleanNum)))
-                    val timestampValid = (afterTimestamp <= 0L) || (callDate >= (afterTimestamp - (2 * 3600 * 1000L)))
+                    val isMatch = if (last10Target.isNotEmpty()) {
+                        last10Num == last10Target || cleanNum.endsWith(last10Target) || last10Target.endsWith(cleanNum)
+                    } else if (cleanTarget.isNotEmpty()) {
+                        cleanNum == cleanTarget || cleanNum.endsWith(cleanTarget)
+                    } else {
+                        false
+                    }
 
-                    if (isMatch && timestampValid) {
-                        android.util.Log.d("CallVerifier", "MATCH FOUND: num=$num, duration=${duration}s, date=$callDate")
+                    // Strictly verify outgoing or attempted calls. Explicitly exclude incoming, missed,
+                    // rejected, or blocked calls so customer callbacks are not falsely counted as dialed.
+                    val isIncomingOrMissed = callType == CallLog.Calls.INCOMING_TYPE ||
+                            callType == CallLog.Calls.MISSED_TYPE ||
+                            callType == CallLog.Calls.VOICEMAIL_TYPE ||
+                            callType == CallLog.Calls.REJECTED_TYPE ||
+                            callType == CallLog.Calls.BLOCKED_TYPE ||
+                            (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N &&
+                             callType == CallLog.Calls.ANSWERED_EXTERNALLY_TYPE)
+
+                    val isOutgoingOrAttempt = (callType == CallLog.Calls.OUTGOING_TYPE) ||
+                            (!isIncomingOrMissed && (duration > 0 || callType > 0))
+
+                    if (isMatch && isOutgoingOrAttempt) {
+                        android.util.Log.d("CallVerifier", "MATCH FOUND: num=$num, duration=${duration}s, date=$callDate, type=$callType")
                         return mapOf(
                             "isDialed" to true,
                             "hasPermission" to true,
@@ -159,7 +184,7 @@ class MainActivity: FlutterActivity() {
                         )
                     }
                     checkedCount++
-                    if (checkedCount >= 50) break
+                    if (checkedCount >= 100) break
                 } while (cursor.moveToNext())
             }
         } catch (e: Exception) {
@@ -177,7 +202,7 @@ class MainActivity: FlutterActivity() {
             cursor?.close()
         }
 
-        android.util.Log.d("CallVerifier", "NO MATCH for target=$targetNumber (clean=$cleanTarget, last10=$last10Target)")
+        android.util.Log.d("CallVerifier", "NO MATCH for target=$targetNumber (clean=$cleanTarget, last10=$last10Target, minTime=$minTimestamp)")
         return mapOf(
             "isDialed" to false,
             "hasPermission" to true,
@@ -205,7 +230,9 @@ class MainActivity: FlutterActivity() {
 
         val selection = if (afterTimestamp > 0) "${CallLog.Calls.DATE} >= ?" else null
         val selectionArgs = if (afterTimestamp > 0) arrayOf(afterTimestamp.toString()) else null
-        val sortOrder = "${CallLog.Calls.DATE} DESC LIMIT $limit"
+        // Android 11+ (API 30+) strict SQLite query builders reject SQL keywords like 'LIMIT' in sortOrder.
+        // We limit results cleanly in the iteration loop below.
+        val sortOrder = "${CallLog.Calls.DATE} DESC"
 
         var cursor: Cursor? = null
         try {

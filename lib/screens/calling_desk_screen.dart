@@ -7,8 +7,10 @@ import 'package:callnow_new/services/api_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/calling_preferences_service.dart';
 import 'package:callnow_new/services/config_service.dart';
+import 'package:callnow_new/services/engagement_service.dart';
 import 'package:callnow_new/services/followup_service.dart';
 import 'package:callnow_new/services/pending_call_recovery_service.dart';
+import 'package:callnow_new/services/today_dialed_history_service.dart';
 import 'package:callnow_new/services/whatsapp_message_service.dart';
 
 class CallingDeskScreen extends StatefulWidget {
@@ -55,12 +57,24 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   /// Bucket tracking — 15 calls per fill, valid for 15 minutes only.
   DateTime? _bucketFilledAt;
   static const Duration _bucketExpiryDuration = Duration(minutes: 15);
+  static const Duration _bucketExpirySafetyThreshold = Duration(minutes: 3);
 
   /// True when the current bucket has expired (15 minutes since last fill).
   bool get _isBucketExpired {
     if (_bucketFilledAt == null) return true;
     return DateTime.now().difference(_bucketFilledAt!) >= _bucketExpiryDuration;
   }
+
+  /// Calculates remaining time before the 15-minute bucket lease expires
+  Duration get _bucketRemainingTime {
+    if (_bucketFilledAt == null) return Duration.zero;
+    final elapsed = DateTime.now().difference(_bucketFilledAt!);
+    final remaining = _bucketExpiryDuration - elapsed;
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
+  /// True when the current bucket lease is nearing expiry (<= 3 minutes remain)
+  bool get _isBucketNearExpiry => _bucketRemainingTime <= _bucketExpirySafetyThreshold;
 
   /// True when there are leads in the queue that haven't been submitted/skipped yet.
   bool get _hasUncompletedCalls {
@@ -71,6 +85,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
 
   // Inactivity tracking
   Timer? _inactivityTimer;
+  Timer? _batchExpiryCheckTimer;
 
   // Verified call log state from Android OS
   VerifiedCallLog? _verifiedCallLog;
@@ -180,6 +195,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     ConfigService.registerLogoutCallback(CallingDeskScreen.clearSessionProcessedLeads);
     ConfigService.registerLogoutCallback(PendingCallRecoveryService.clearPendingCall);
     _startInactivityTimer();
+    _startBatchExpiryCheckTimer();
     _loadInitialBatch();
     CallTrackingService.activeCallSession.addListener(_onCallSessionDetected);
   }
@@ -225,11 +241,19 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
 
   @override
   void dispose() {
+    _batchExpiryCheckTimer?.cancel();
     _inactivityTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     CallTrackingService.activeCallSession.removeListener(_onCallSessionDetected);
     _notesController.dispose();
     super.dispose();
+  }
+
+  void _startBatchExpiryCheckTimer() {
+    _batchExpiryCheckTimer?.cancel();
+    _batchExpiryCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      _checkAndAutoFillBatchIfNeeded();
+    });
   }
 
   void _startInactivityTimer() {
@@ -240,19 +264,31 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     _inactivityTimer?.cancel();
   }
 
+  int _resumePollGeneration = 0;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // User returned from dialer, auto-verify call log immediately and with retry delays
-      _verifyCallWithAndroidLog();
+      // User returned from dialer, auto-verify call log immediately and with progressive retry delays
+      // to accommodate OEM dialer asynchronous write latency (MIUI, ColorOS, Vivo)
       CallingPreferencesService.triggerCallEndVibration();
-      Future.delayed(const Duration(milliseconds: 1200), () {
-        if (mounted && (_verifiedCallLog == null || !_verifiedCallLog!.isDialed)) {
-          _verifyCallWithAndroidLog();
-        }
-      });
-      Future.delayed(const Duration(milliseconds: 2500), () {
-        if (mounted && (_verifiedCallLog == null || !_verifiedCallLog!.isDialed)) {
+      _pollCallLogOnResume();
+    }
+  }
+
+  void _pollCallLogOnResume() {
+    _resumePollGeneration++;
+    final currentGen = _resumePollGeneration;
+
+    // Immediately verify on resume
+    _verifyCallWithAndroidLog();
+
+    // Progressive delays to catch asynchronous CallLog provider writes
+    const delays = [1200, 2500, 4000, 6000];
+    for (final ms in delays) {
+      Future.delayed(Duration(milliseconds: ms), () {
+        if (!mounted || currentGen != _resumePollGeneration) return;
+        if (_verifiedCallLog == null || !_verifiedCallLog!.isDialed) {
           _verifyCallWithAndroidLog();
         }
       });
@@ -270,10 +306,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     setState(() => _isCheckingCallLog = true);
 
     try {
-      // Query recent call logs for this mobile number
+      // Query recent call logs for this mobile number using dial session timestamp
       final verified = await CallTrackingService.verifyCallLog(
         mobile,
-        afterTimestamp: 0,
+        afterTimestamp: CallTrackingService.lastDialTimestamp,
       );
 
       if (mounted) {
@@ -375,6 +411,13 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
         return id.isEmpty || !CallingDeskScreen._sessionProcessedLeadIds.contains(id);
       }).toList();
 
+      final fillTime = DateTime.now();
+      final expiryTime = fillTime.add(_bucketExpiryDuration);
+      final toSave = <Map<String, dynamic>>[];
+      if (pendingLead != null) toSave.add(pendingLead);
+      toSave.addAll(freshBatch);
+      await TodayDialedHistoryService.instance.saveBatchLeads(toSave, expiresAt: expiryTime);
+
       if (mounted) {
         setState(() {
           _leads.clear();
@@ -387,7 +430,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           _leads.addAll(freshBatch);
           _currentIndex = 0;
           _isLoading = false;
-          _bucketFilledAt = DateTime.now(); // Mark when this 15-call bucket was filled
+          _bucketFilledAt = fillTime; // Mark when this 15-call bucket was filled
           _resetFormForCurrentLead();
           if (_isRestoredFromPending) {
             _showOutcomes = true;
@@ -467,12 +510,16 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
         return id.isEmpty || !CallingDeskScreen._sessionProcessedLeadIds.contains(id);
       }).toList();
 
+      final fillTime = DateTime.now();
+      final expiryTime = fillTime.add(_bucketExpiryDuration);
+      await TodayDialedHistoryService.instance.saveBatchLeads(freshBatch, expiresAt: expiryTime);
+
       if (mounted) {
         setState(() {
           _leads.clear();
           _leads.addAll(freshBatch);
           _currentIndex = 0;
-          _bucketFilledAt = DateTime.now(); // New bucket fill time
+          _bucketFilledAt = fillTime; // New bucket fill time
           _resetFormForCurrentLead();
         });
         ScaffoldMessenger.of(context).showSnackBar(
@@ -508,12 +555,13 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     }
   }
 
-  Future<void> _fetchMoreLeads() async {
-    if (_isFetchingMore) return;
+  /// Top-up batch from server to maintain exactly 15 uncalled leads without wiping the active contact
+  Future<void> _topUpBatch({required int needed}) async {
+    if (_isFetchingMore || needed <= 0) return;
     setState(() => _isFetchingMore = true);
 
     try {
-      final batch = await ApiService.getBatchLeads(limit: 15);
+      final batch = await ApiService.getBatchLeads(limit: needed);
       if (mounted) {
         final existingIdentifiers = <String>{};
         for (final l in _leads) {
@@ -527,13 +575,55 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
               !existingIdentifiers.contains(id);
         }).toList();
 
-        setState(() {
-          _leads.addAll(newLeads);
-          _isFetchingMore = false;
-        });
+        if (newLeads.isNotEmpty) {
+          final fillTime = DateTime.now();
+          final expiryTime = fillTime.add(_bucketExpiryDuration);
+          await TodayDialedHistoryService.instance.appendBatchLeads(newLeads, expiresAt: expiryTime);
+
+          setState(() {
+            _leads.addAll(newLeads);
+            _bucketFilledAt = fillTime; // Reset 15-minute lease clock
+            _isFetchingMore = false;
+          });
+          debugPrint('[CallingDesk] Auto-filled ${newLeads.length} leads. Total uncalled: ${_leads.length - _currentIndex}. Lease clock reset.');
+        } else {
+          setState(() {
+            _bucketFilledAt = DateTime.now();
+            _isFetchingMore = false;
+          });
+        }
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[CallingDesk] Auto-fill batch warning: $e');
       if (mounted) setState(() => _isFetchingMore = false);
+    }
+  }
+
+  /// Proactively renews the 15-minute bucket lease from server when remaining time is low (<= 3 min)
+  Future<void> _renewBucketForNearExpiry() async {
+    final uncalledCount = (_leads.length - _currentIndex).clamp(0, 999);
+    final needed = (15 - uncalledCount).clamp(1, 15);
+    await _topUpBatch(needed: needed);
+  }
+
+  Future<void> _fetchMoreLeads() async {
+    final uncalledCount = (_leads.length - _currentIndex).clamp(0, 999);
+    if (uncalledCount < 15) {
+      await _topUpBatch(needed: 15 - uncalledCount);
+    }
+  }
+
+  void _checkAndAutoFillBatchIfNeeded() {
+    if (!mounted || _isLoading || _isSubmitting || _isFetchingMore) return;
+    if (_leads.isEmpty) return;
+
+    final uncalledCount = (_leads.length - _currentIndex).clamp(0, 999);
+    if (_isBucketNearExpiry || _isBucketExpired || uncalledCount <= 3) {
+      if (uncalledCount < 15) {
+        _topUpBatch(needed: 15 - uncalledCount);
+      } else if (_isBucketNearExpiry) {
+        setState(() => _bucketFilledAt = DateTime.now());
+      }
     }
   }
 
@@ -552,7 +642,52 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   Future<void> _onGetStatusTapped() async {
     setState(() => _isCheckingCallLog = true);
     await _verifyCallWithAndroidLog(showToast: false);
+
+    // If not found yet and call was recently placed, wait 1200ms and re-check once
+    // to absorb asynchronous OEM CallLog write latency (ColorOS, MIUI, Vivo)
+    if ((_verifiedCallLog == null || !_verifiedCallLog!.isDialed) &&
+        CallTrackingService.lastDialTime != null &&
+        DateTime.now().difference(CallTrackingService.lastDialTime!).inSeconds < 60) {
+      await Future.delayed(const Duration(milliseconds: 1200));
+      if (mounted) {
+        await _verifyCallWithAndroidLog(showToast: false);
+      }
+    }
+
     if (mounted) setState(() => _isCheckingCallLog = false);
+
+    final bool hasPermission = _verifiedCallLog?.hasPermission ?? true;
+    if (!hasPermission || _verifiedCallLog?.error == 'PERMISSION_DENIED') {
+      if (mounted) {
+        setState(() => _showOutcomes = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Row(
+              children: [
+                Icon(Icons.security, color: Colors.white, size: 20),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Call Log permission is required to detect dialed calls. Please enable it in Settings.',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: const Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 5),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            action: SnackBarAction(
+              label: 'SETTINGS',
+              textColor: Colors.yellowAccent,
+              onPressed: () => CallTrackingService.openAppSettings(),
+            ),
+          ),
+        );
+      }
+      return;
+    }
 
     final bool isDialed = _verifiedCallLog != null && _verifiedCallLog!.isDialed;
     if (!isDialed) {
@@ -576,7 +711,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
             ),
             backgroundColor: const Color(0xFFDC2626),
             behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 3),
+            duration: const Duration(seconds: 4),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         );
@@ -597,6 +732,18 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           _selectedDisposition = 'NOT_INTERESTED';
         }
       });
+
+      if (_currentLead != null) {
+        final mobile = (_currentLead!['mobile'] ?? '').toString();
+        if (mobile.isNotEmpty) {
+          TodayDialedHistoryService.instance.updateBatchLeadStatus(
+            mobile,
+            status: 'DIALED',
+            duration: _durationSeconds,
+            callStatus: _selectedDisposition,
+          );
+        }
+      }
 
       // Bottom floating pill toast — compact, no overflow
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -690,8 +837,21 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       Clipboard.setData(ClipboardData(text: mobile));
     }
 
+    // Pre-dial 15-minute lease protection:
+    // If the current bucket is expired or nearing expiry (less than 3 minutes remain),
+    // proactively fetch fresh numbers to reset the 15-minute clock before placing the call!
+    if (_isBucketNearExpiry || _isBucketExpired) {
+      await _renewBucketForNearExpiry();
+    }
+
     // Persist this lead immediately to survive low-RAM background process termination
     await PendingCallRecoveryService.savePendingCall(lead);
+
+    // Update local batch record in SQLite to DIALED
+    await TodayDialedHistoryService.instance.updateBatchLeadStatus(
+      mobile,
+      status: 'DIALED',
+    );
 
     final launched = await CallTrackingService.makePhoneCall(mobile);
     if (!launched) {
@@ -864,6 +1024,16 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     CallingDeskScreen.markLeadProcessed(leadId);
     await PendingCallRecoveryService.clearPendingCall();
 
+    final mobileNum = (lead['mobile'] ?? '').toString();
+    if (mobileNum.isNotEmpty) {
+      await TodayDialedHistoryService.instance.updateBatchLeadStatus(
+        mobileNum,
+        status: 'SKIPPED',
+        duration: _durationSeconds,
+        callStatus: 'SKIPPED',
+      );
+    }
+
     if (_currentIndex + 1 < _leads.length) {
       setState(() {
         _isRestoredFromPending = false;
@@ -930,6 +1100,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   }
 
   Future<void> _submitAndNext() async {
+    if (_isSubmitting) return;
     final lead = _currentLead;
     if (lead == null) return;
 
@@ -1020,8 +1191,8 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       return;
     }
 
-    final leadId = int.tryParse(lead['id'].toString()) ?? 0;
-    final source = (lead['source'] ?? 'TEMPORARY').toString();
+    final leadId = PendingCallRecoveryService.extractLeadId(lead);
+    final source = PendingCallRecoveryService.extractSource(lead);
 
     // Map disposition to exact label / server status
     String statusLabel = _selectedDisposition;
@@ -1096,6 +1267,30 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
         CallingDeskScreen.markLeadProcessed(leadIdentifier);
         await PendingCallRecoveryService.clearPendingCall();
 
+        // Record into SQLite Today's Dialed History for fast customer callback matching & XP tracking
+        final mobileNum = lead['mobile']?.toString() ?? '';
+        if (mobileNum.isNotEmpty) {
+          // Update SQLite current_batch_leads to COMPLETED
+          await TodayDialedHistoryService.instance.updateBatchLeadStatus(
+            mobileNum,
+            status: 'COMPLETED',
+            duration: verifiedDur,
+            callStatus: statusLabel,
+          );
+
+          await TodayDialedHistoryService.instance.recordDialedCall(
+            recordId: leadId,
+            source: source,
+            status: statusLabel,
+            duration: verifiedDur,
+            phoneNumber: mobileNum,
+            name: lead['name']?.toString(),
+            company: lead['company']?.toString(),
+            timingTier: effectiveTiming,
+            dialedAt: DateTime.now().toIso8601String(),
+          );
+        }
+
         final followupNotice = _followupDateTime != null
             ? ' (⏰ Callback set for ${_followupDateTime!.day}/${_followupDateTime!.month} ${_followupDateTime!.hour.toString().padLeft(2, '0')}:${_followupDateTime!.minute.toString().padLeft(2, '0')})'
             : '';
@@ -1112,14 +1307,64 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           _resetFormForCurrentLead();
         });
 
-        // Trigger pre-fetch when queue runs low
-        if (_leads.length - _currentIndex <= 3) {
+        // Proactively renew bucket if lease is nearing expiry (<= 3 min), or pre-fetch when queue runs low
+        if (_isBucketNearExpiry || _isBucketExpired) {
+          _renewBucketForNearExpiry();
+        } else if (_leads.length - _currentIndex <= 3) {
           _fetchMoreLeads();
         }
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isSubmitting = false);
+        final errStr = e.toString();
+        final isAuthOrExpired = errStr.contains('403') ||
+            errStr.toLowerCase().contains('not authoriz') ||
+            errStr.toLowerCase().contains('no authorise') ||
+            errStr.toLowerCase().contains('expired');
+
+        if (isAuthOrExpired) {
+          // Assignment expired on server or reallocated to another telecaller
+          final leadIdentifier = CallingDeskScreen.getLeadIdentifier(lead);
+          CallingDeskScreen.markLeadProcessed(leadIdentifier);
+          await PendingCallRecoveryService.clearPendingCall();
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.white, size: 20),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Record assignment on server expired or reallocated. Moving to next lead.',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.orange.shade800,
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 4),
+              ),
+            );
+          }
+
+          setState(() {
+            _isRestoredFromPending = false;
+            _currentIndex++;
+            _resetFormForCurrentLead();
+          });
+
+          if (_leads.isEmpty || _currentIndex >= _leads.length) {
+            _loadInitialBatch(force: true);
+          } else if (_leads.length - _currentIndex <= 3) {
+            _fetchMoreLeads();
+          }
+          return;
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Submission failed: $e'),
@@ -1422,8 +1667,8 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                                 setModalState(() => isModalSubmitting = true);
 
                                 try {
-                                  final leadId = int.tryParse(leadData['id'].toString()) ?? 0;
-                                  final source = (leadData['source'] ?? 'TEMPORARY').toString();
+                                  final leadId = PendingCallRecoveryService.extractLeadId(leadData);
+                                  final source = PendingCallRecoveryService.extractSource(leadData);
 
                                   // Submit call with loan qualification (converts Client Contact -> Lead on server)
                                   final result = await ApiService.submitCallResult(
@@ -1454,6 +1699,30 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                                     CallingDeskScreen.markLeadProcessed(leadIdentifier);
                                     await PendingCallRecoveryService.clearPendingCall();
 
+                                    // Record in SQLite Today's Dialed History
+                                    final mobileNum = leadData['mobile']?.toString() ?? '';
+                                    if (mobileNum.isNotEmpty) {
+                                      await TodayDialedHistoryService.instance.updateBatchLeadStatus(
+                                        mobileNum,
+                                        status: 'COMPLETED',
+                                        duration: verifiedDur ?? 0,
+                                        callStatus: 'CONVERTED_LEAD',
+                                      );
+                                    }
+                                    if (mobileNum.isNotEmpty) {
+                                      await TodayDialedHistoryService.instance.recordDialedCall(
+                                        recordId: leadId,
+                                        source: source,
+                                        status: 'CONVERTED_LEAD',
+                                        duration: verifiedDur ?? 0,
+                                        phoneNumber: mobileNum,
+                                        name: nameCtrl.text.trim(),
+                                        company: leadData['company']?.toString(),
+                                        timingTier: effectiveTiming,
+                                        dialedAt: DateTime.now().toIso8601String(),
+                                      );
+                                    }
+
                                     _showEngagementFeedback(
                                       result,
                                       fallbackMessage: 'Contact converted to Lead for ${nameCtrl.text.trim()}! Added to pipeline.',
@@ -1473,6 +1742,55 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                                 } catch (e) {
                                   setModalState(() => isModalSubmitting = false);
                                   if (mounted) {
+                                    final errStr = e.toString();
+                                    final isAuthOrExpired = errStr.contains('403') ||
+                                        errStr.toLowerCase().contains('not authoriz') ||
+                                        errStr.toLowerCase().contains('no authorise') ||
+                                        errStr.toLowerCase().contains('expired');
+
+                                    if (isAuthOrExpired) {
+                                      if (modalCtx.mounted) Navigator.pop(modalCtx);
+                                      final leadIdentifier = CallingDeskScreen.getLeadIdentifier(leadData);
+                                      CallingDeskScreen.markLeadProcessed(leadIdentifier);
+                                      await PendingCallRecoveryService.clearPendingCall();
+
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: const Row(
+                                              children: [
+                                                Icon(Icons.info_outline, color: Colors.white, size: 20),
+                                                SizedBox(width: 8),
+                                                Expanded(
+                                                  child: Text(
+                                                    'Record assignment on server expired or reallocated. Moving to next lead.',
+                                                    style: TextStyle(fontWeight: FontWeight.w600),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            backgroundColor: Colors.orange.shade800,
+                                            behavior: SnackBarBehavior.floating,
+                                            duration: const Duration(seconds: 4),
+                                          ),
+                                        );
+                                      }
+
+                                      setState(() {
+                                        _isRestoredFromPending = false;
+                                        _isSubmitting = false;
+                                        _currentIndex++;
+                                        _resetFormForCurrentLead();
+                                      });
+
+                                      if (_leads.isEmpty || _currentIndex >= _leads.length) {
+                                        _loadInitialBatch(force: true);
+                                      } else if (_leads.length - _currentIndex <= 3) {
+                                        _fetchMoreLeads();
+                                      }
+                                      return;
+                                    }
+
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: Text('Failed to convert contact: $e'),
@@ -1805,6 +2123,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           ),
         ),
 
+        // ── Compact Performance & XP Competition Bar ─────────────────────
+        _buildCompactPerformanceXpBar(),
+
         // ── Contact Details Card ──────────────────────────────────────────
         Card(
           elevation: 2,
@@ -2006,6 +2327,87 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
         ),
         const SizedBox(height: 16),
       ],
+    );
+  }
+
+  /// Compact performance & XP competition mini-card based on telecaller performance
+  Widget _buildCompactPerformanceXpBar() {
+    return ListenableBuilder(
+      listenable: EngagementService.instance,
+      builder: (context, _) {
+        final eng = EngagementService.instance.state;
+        final target = eng.targetToday > 0 ? eng.targetToday : 250;
+        final connected = eng.connectedToday;
+        final progress = (connected / target).clamp(0.0, 1.0);
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        eng.levelTitle,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1E293B),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEEF2FF),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: const Color(0xFFC7D2FE)),
+                        ),
+                        child: Text(
+                          '${eng.totalXp} XP',
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF4338CA),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    '🎯 $connected/$target Calls',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 3,
+                  backgroundColor: const Color(0xFFE2E8F0),
+                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
