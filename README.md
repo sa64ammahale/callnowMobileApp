@@ -148,6 +148,10 @@ flutter build linux --release
 flutter build macos --release
 ```
 
+## Documentation
+
+- [Native Calling Engine Architecture](docs/NATIVE_CALLING_ENGINE.md) — Comprehensive technical guide detailing the Android telephony state machine, CallLog ContentProvider verification, OOM crash recovery, and privacy guard mechanisms.
+
 ## Configuration
 
 - Update API base URL in `lib/services/web_url.dart` if needed.

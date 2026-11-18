@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import 'package:callnow_new/services/api_service.dart';
+import 'package:callnow_new/services/call_bucket_service.dart';
 
 int? _tryParseInt(dynamic val) {
   if (val == null) return null;
@@ -25,10 +26,21 @@ abstract class TodayDialedHistoryBackend {
   Future<void> close();
 
   // 15-Minute Batch Queue Local Operations
-  Future<void> saveBatchLeads(List<Map<String, dynamic>> leads, {required DateTime expiresAt});
-  Future<void> appendBatchLeads(List<Map<String, dynamic>> leads, {required DateTime expiresAt});
+  Future<void> saveBatchLeads(
+    List<Map<String, dynamic>> leads, {
+    required DateTime expiresAt,
+  });
+  Future<void> appendBatchLeads(
+    List<Map<String, dynamic>> leads, {
+    required DateTime expiresAt,
+  });
   Future<List<Map<String, dynamic>>> getActiveBatchLeads();
-  Future<void> updateBatchLeadStatus(String last10, {required String status, int? duration, String? callStatus});
+  Future<void> updateBatchLeadStatus(
+    String last10, {
+    required String status,
+    int? duration,
+    String? callStatus,
+  });
   Future<Map<String, dynamic>?> getBatchLeadByLast10(String last10);
   Future<int> getUncalledBatchLeadsCount();
   Future<DateTime?> getBatchExpiryTime();
@@ -88,16 +100,22 @@ class MemoryTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
   // --- Batch Operations (Memory) ---
 
   @override
-  Future<void> saveBatchLeads(List<Map<String, dynamic>> leads, {required DateTime expiresAt}) async {
+  Future<void> saveBatchLeads(
+    List<Map<String, dynamic>> leads, {
+    required DateTime expiresAt,
+  }) async {
     _batchRecords.removeWhere((r) => r['status'] == 'PENDING');
     for (int i = 0; i < leads.length; i++) {
       final lead = leads[i];
-      final phone = (lead['mobile'] ?? lead['phone_number'] ?? lead['phone'] ?? '').toString();
+      final phone =
+          (lead['mobile'] ?? lead['phone_number'] ?? lead['phone'] ?? '')
+              .toString();
       final last10 = TodayDialedHistoryService.normalizeLast10(phone);
       if (last10.isEmpty) continue;
       _batchRecords.add({
         'lead_id': _tryParseInt(lead['lead_id']) ?? _tryParseInt(lead['id']),
-        'record_id': _tryParseInt(lead['record_id']) ?? _tryParseInt(lead['id']),
+        'record_id':
+            _tryParseInt(lead['record_id']) ?? _tryParseInt(lead['id']),
         'name': lead['name']?.toString() ?? '',
         'phone_number': phone,
         'last10': last10,
@@ -115,21 +133,29 @@ class MemoryTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
   }
 
   @override
-  Future<void> appendBatchLeads(List<Map<String, dynamic>> leads, {required DateTime expiresAt}) async {
+  Future<void> appendBatchLeads(
+    List<Map<String, dynamic>> leads, {
+    required DateTime expiresAt,
+  }) async {
     for (final r in _batchRecords) {
       if (r['status'] == 'PENDING' || r['status'] == 'DIALED') {
         r['expires_at'] = expiresAt.toIso8601String();
       }
     }
-    int baseSort = _batchRecords.isEmpty ? 0 : (_batchRecords.last['sort_order'] as int? ?? 0) + 1;
+    int baseSort = _batchRecords.isEmpty
+        ? 0
+        : (_batchRecords.last['sort_order'] as int? ?? 0) + 1;
     for (int i = 0; i < leads.length; i++) {
       final lead = leads[i];
-      final phone = (lead['mobile'] ?? lead['phone_number'] ?? lead['phone'] ?? '').toString();
+      final phone =
+          (lead['mobile'] ?? lead['phone_number'] ?? lead['phone'] ?? '')
+              .toString();
       final last10 = TodayDialedHistoryService.normalizeLast10(phone);
       if (last10.isEmpty) continue;
       _batchRecords.add({
         'lead_id': _tryParseInt(lead['lead_id']) ?? _tryParseInt(lead['id']),
-        'record_id': _tryParseInt(lead['record_id']) ?? _tryParseInt(lead['id']),
+        'record_id':
+            _tryParseInt(lead['record_id']) ?? _tryParseInt(lead['id']),
         'name': lead['name']?.toString() ?? '',
         'phone_number': phone,
         'last10': last10,
@@ -148,8 +174,12 @@ class MemoryTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
 
   @override
   Future<List<Map<String, dynamic>>> getActiveBatchLeads() async {
-    final active = _batchRecords.where((r) => r['status'] == 'PENDING' || r['status'] == 'DIALED').toList();
-    active.sort((a, b) => (a['sort_order'] as int).compareTo(b['sort_order'] as int));
+    final active = _batchRecords
+        .where((r) => r['status'] == 'PENDING' || r['status'] == 'DIALED')
+        .toList();
+    active.sort(
+      (a, b) => (a['sort_order'] as int).compareTo(b['sort_order'] as int),
+    );
     final list = <Map<String, dynamic>>[];
     for (final row in active) {
       Map<String, dynamic> lead;
@@ -172,7 +202,12 @@ class MemoryTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
   }
 
   @override
-  Future<void> updateBatchLeadStatus(String last10, {required String status, int? duration, String? callStatus}) async {
+  Future<void> updateBatchLeadStatus(
+    String last10, {
+    required String status,
+    int? duration,
+    String? callStatus,
+  }) async {
     for (final r in _batchRecords) {
       if (r['last10'] == last10) {
         r['status'] = status;
@@ -209,13 +244,16 @@ class MemoryTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
 
   @override
   Future<int> getUncalledBatchLeadsCount() async {
-    return _batchRecords.where((r) => r['status'] == 'PENDING' || r['status'] == 'DIALED').length;
+    return _batchRecords
+        .where((r) => r['status'] == 'PENDING' || r['status'] == 'DIALED')
+        .length;
   }
 
   @override
   Future<DateTime?> getBatchExpiryTime() async {
     for (final r in _batchRecords.reversed) {
-      if ((r['status'] == 'PENDING' || r['status'] == 'DIALED') && r['expires_at'] != null) {
+      if ((r['status'] == 'PENDING' || r['status'] == 'DIALED') &&
+          r['expires_at'] != null) {
         return DateTime.tryParse(r['expires_at'].toString());
       }
     }
@@ -266,7 +304,9 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
           ''');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_today_last10 ON $tableName (last10)');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_today_last10 ON $tableName (last10)',
+          );
 
           await db.execute('''
             CREATE TABLE $batchTableName (
@@ -288,8 +328,12 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
           ''');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_batch_last10 ON $batchTableName (last10)');
-          await db.execute('CREATE INDEX IF NOT EXISTS idx_batch_status ON $batchTableName (status)');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_batch_last10 ON $batchTableName (last10)',
+          );
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_batch_status ON $batchTableName (status)',
+          );
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
@@ -313,8 +357,12 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
               )
             ''');
-            await db.execute('CREATE INDEX IF NOT EXISTS idx_batch_last10 ON $batchTableName (last10)');
-            await db.execute('CREATE INDEX IF NOT EXISTS idx_batch_status ON $batchTableName (status)');
+            await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_batch_last10 ON $batchTableName (last10)',
+            );
+            await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_batch_status ON $batchTableName (status)',
+            );
           }
         },
       );
@@ -341,7 +389,9 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
         )
       ''');
     } catch (e) {
-      debugPrint('[TodayDialedHistory] SQLite init notice (test or fallback): $e');
+      debugPrint(
+        '[TodayDialedHistory] SQLite init notice (test or fallback): $e',
+      );
     }
   }
 
@@ -356,7 +406,11 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
 
     // Delete older occurrence for same 10-digit number to maintain fresh status
     await db.delete(tableName, where: 'last10 = ?', whereArgs: [last10]);
-    await db.insert(tableName, call, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+      tableName,
+      call,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   @override
@@ -391,7 +445,9 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
     final db = _db;
     if (db == null) return 0;
 
-    final count = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM $tableName'));
+    final count = Sqflite.firstIntValue(
+      await db.rawQuery('SELECT COUNT(*) FROM $tableName'),
+    );
     return count ?? 0;
   }
 
@@ -401,7 +457,9 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
     final db = _db;
     if (db == null) return 0;
 
-    final res = await db.rawQuery('SELECT SUM(duration) as total FROM $tableName');
+    final res = await db.rawQuery(
+      'SELECT SUM(duration) as total FROM $tableName',
+    );
     if (res.isNotEmpty && res.first['total'] != null) {
       return (res.first['total'] as num).toInt();
     }
@@ -429,7 +487,10 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
   // --- Batch Operations (SQLite) ---
 
   @override
-  Future<void> saveBatchLeads(List<Map<String, dynamic>> leads, {required DateTime expiresAt}) async {
+  Future<void> saveBatchLeads(
+    List<Map<String, dynamic>> leads, {
+    required DateTime expiresAt,
+  }) async {
     await init();
     final db = _db;
     if (db == null) return;
@@ -440,49 +501,53 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
     final batch = db.batch();
     for (int i = 0; i < leads.length; i++) {
       final lead = leads[i];
-      final phone = (lead['mobile'] ?? lead['phone_number'] ?? lead['phone'] ?? '').toString();
+      final phone =
+          (lead['mobile'] ?? lead['phone_number'] ?? lead['phone'] ?? '')
+              .toString();
       final last10 = TodayDialedHistoryService.normalizeLast10(phone);
       if (last10.isEmpty) continue;
 
-      batch.insert(
-        batchTableName,
-        {
-          'lead_id': _tryParseInt(lead['lead_id']) ?? _tryParseInt(lead['id']),
-          'record_id': _tryParseInt(lead['record_id']) ?? _tryParseInt(lead['id']),
-          'name': lead['name']?.toString() ?? '',
-          'phone_number': phone,
-          'last10': last10,
-          'company': lead['company']?.toString() ?? '',
-          'source': lead['source']?.toString() ?? 'BATCH',
-          'batch_fetched_at': DateTime.now().toIso8601String(),
-          'expires_at': expiresAt.toIso8601String(),
-          'status': 'PENDING',
-          'call_duration': 0,
-          'call_status': null,
-          'raw_json': jsonEncode(lead),
-          'sort_order': i,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      batch.insert(batchTableName, {
+        'lead_id': _tryParseInt(lead['lead_id']) ?? _tryParseInt(lead['id']),
+        'record_id':
+            _tryParseInt(lead['record_id']) ?? _tryParseInt(lead['id']),
+        'name': lead['name']?.toString() ?? '',
+        'phone_number': phone,
+        'last10': last10,
+        'company': lead['company']?.toString() ?? '',
+        'source': lead['source']?.toString() ?? 'BATCH',
+        'batch_fetched_at': DateTime.now().toIso8601String(),
+        'expires_at': expiresAt.toIso8601String(),
+        'status': 'PENDING',
+        'call_duration': 0,
+        'call_status': null,
+        'raw_json': jsonEncode(lead),
+        'sort_order': i,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
-    debugPrint('[TodayDialedHistory] Saved ${leads.length} batch leads to SQLite.');
+    debugPrint(
+      '[TodayDialedHistory] Saved ${leads.length} batch leads to SQLite.',
+    );
   }
 
   @override
-  Future<void> appendBatchLeads(List<Map<String, dynamic>> leads, {required DateTime expiresAt}) async {
+  Future<void> appendBatchLeads(
+    List<Map<String, dynamic>> leads, {
+    required DateTime expiresAt,
+  }) async {
     await init();
     final db = _db;
     if (db == null) return;
 
     // Reset expiry for active leads in queue
-    await db.update(
-      batchTableName,
-      {'expires_at': expiresAt.toIso8601String()},
-      where: "status IN ('PENDING', 'DIALED')",
-    );
+    await db.update(batchTableName, {
+      'expires_at': expiresAt.toIso8601String(),
+    }, where: "status IN ('PENDING', 'DIALED')");
 
-    final maxRes = await db.rawQuery('SELECT MAX(sort_order) as max_sort FROM $batchTableName');
+    final maxRes = await db.rawQuery(
+      'SELECT MAX(sort_order) as max_sort FROM $batchTableName',
+    );
     int baseSort = 0;
     if (maxRes.isNotEmpty && maxRes.first['max_sort'] != null) {
       baseSort = (maxRes.first['max_sort'] as num).toInt() + 1;
@@ -491,33 +556,34 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
     final batch = db.batch();
     for (int i = 0; i < leads.length; i++) {
       final lead = leads[i];
-      final phone = (lead['mobile'] ?? lead['phone_number'] ?? lead['phone'] ?? '').toString();
+      final phone =
+          (lead['mobile'] ?? lead['phone_number'] ?? lead['phone'] ?? '')
+              .toString();
       final last10 = TodayDialedHistoryService.normalizeLast10(phone);
       if (last10.isEmpty) continue;
 
-      batch.insert(
-        batchTableName,
-        {
-          'lead_id': _tryParseInt(lead['lead_id']) ?? _tryParseInt(lead['id']),
-          'record_id': _tryParseInt(lead['record_id']) ?? _tryParseInt(lead['id']),
-          'name': lead['name']?.toString() ?? '',
-          'phone_number': phone,
-          'last10': last10,
-          'company': lead['company']?.toString() ?? '',
-          'source': lead['source']?.toString() ?? 'BATCH',
-          'batch_fetched_at': DateTime.now().toIso8601String(),
-          'expires_at': expiresAt.toIso8601String(),
-          'status': 'PENDING',
-          'call_duration': 0,
-          'call_status': null,
-          'raw_json': jsonEncode(lead),
-          'sort_order': baseSort + i,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      batch.insert(batchTableName, {
+        'lead_id': _tryParseInt(lead['lead_id']) ?? _tryParseInt(lead['id']),
+        'record_id':
+            _tryParseInt(lead['record_id']) ?? _tryParseInt(lead['id']),
+        'name': lead['name']?.toString() ?? '',
+        'phone_number': phone,
+        'last10': last10,
+        'company': lead['company']?.toString() ?? '',
+        'source': lead['source']?.toString() ?? 'BATCH',
+        'batch_fetched_at': DateTime.now().toIso8601String(),
+        'expires_at': expiresAt.toIso8601String(),
+        'status': 'PENDING',
+        'call_duration': 0,
+        'call_status': null,
+        'raw_json': jsonEncode(lead),
+        'sort_order': baseSort + i,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
-    debugPrint('[TodayDialedHistory] Appended ${leads.length} batch leads to SQLite.');
+    debugPrint(
+      '[TodayDialedHistory] Appended ${leads.length} batch leads to SQLite.',
+    );
   }
 
   @override
@@ -564,9 +630,7 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
     final db = _db;
     if (db == null || last10.isEmpty) return;
 
-    final values = <String, dynamic>{
-      'status': status,
-    };
+    final values = <String, dynamic>{'status': status};
     if (duration != null) {
       values['call_duration'] = duration;
     }
@@ -620,9 +684,11 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
     final db = _db;
     if (db == null) return 0;
 
-    final count = Sqflite.firstIntValue(await db.rawQuery(
-      "SELECT COUNT(*) FROM $batchTableName WHERE status IN ('PENDING', 'DIALED')",
-    ));
+    final count = Sqflite.firstIntValue(
+      await db.rawQuery(
+        "SELECT COUNT(*) FROM $batchTableName WHERE status IN ('PENDING', 'DIALED')",
+      ),
+    );
     return count ?? 0;
   }
 
@@ -660,10 +726,13 @@ class SqfliteTodayDialedHistoryBackend implements TodayDialedHistoryBackend {
 /// personal call intrusion (family/spouse), compute XP metrics, and cache reports.
 class TodayDialedHistoryService {
   static TodayDialedHistoryService? _instance;
-  static TodayDialedHistoryService get instance => _instance ??= TodayDialedHistoryService._internal();
+  static TodayDialedHistoryService get instance =>
+      _instance ??= TodayDialedHistoryService._internal();
 
   TodayDialedHistoryService._internal() {
-    _backend = (kIsWeb || (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')))
+    _backend =
+        (kIsWeb ||
+            (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')))
         ? MemoryTodayDialedHistoryBackend()
         : SqfliteTodayDialedHistoryBackend();
   }
@@ -678,7 +747,9 @@ class TodayDialedHistoryService {
 
   @visibleForTesting
   static void resetBackend() {
-    instance._backend = (kIsWeb || (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')))
+    instance._backend =
+        (kIsWeb ||
+            (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')))
         ? MemoryTodayDialedHistoryBackend()
         : SqfliteTodayDialedHistoryBackend();
   }
@@ -733,7 +804,9 @@ class TodayDialedHistoryService {
     };
 
     await _backend.insertOrUpdate(record);
-    debugPrint('[TodayDialedHistory] Recorded call to $name ($last10, ${duration}s, status=$status)');
+    debugPrint(
+      '[TodayDialedHistory] Recorded call to $name ($last10, ${duration}s, status=$status)',
+    );
   }
 
   /// Find a call record from today's dialed history by phone number.
@@ -760,7 +833,8 @@ class TodayDialedHistoryService {
       int syncedCount = 0;
       for (final item in rawCalls) {
         if (item is Map) {
-          final phone = (item['phone_number'] ?? item['mobile'] ?? '').toString();
+          final phone = (item['phone_number'] ?? item['mobile'] ?? '')
+              .toString();
           if (phone.isNotEmpty) {
             await recordDialedCall(
               serverCallId: _tryParseInt(item['id']),
@@ -770,16 +844,24 @@ class TodayDialedHistoryService {
               phoneNumber: phone,
               company: item['company']?.toString(),
               source: item['source']?.toString(),
-              status: item['call_status']?.toString() ?? item['status']?.toString(),
-              duration: _tryParseInt(item['call_duration']) ?? _tryParseInt(item['duration']) ?? 0,
+              status:
+                  item['call_status']?.toString() ?? item['status']?.toString(),
+              duration:
+                  _tryParseInt(item['call_duration']) ??
+                  _tryParseInt(item['duration']) ??
+                  0,
               timingTier: item['timing_classification']?.toString(),
-              dialedAt: item['created_at']?.toString() ?? item['call_date']?.toString(),
+              dialedAt:
+                  item['created_at']?.toString() ??
+                  item['call_date']?.toString(),
             );
             syncedCount++;
           }
         }
       }
-      debugPrint('[TodayDialedHistory] Successfully synchronized $syncedCount calls from server.');
+      debugPrint(
+        '[TodayDialedHistory] Successfully synchronized $syncedCount calls from server.',
+      );
       return syncedCount;
     } catch (e) {
       debugPrint('[TodayDialedHistory] Server sync warning: $e');
@@ -806,18 +888,27 @@ class TodayDialedHistoryService {
   Future<void> clearAll() async {
     await _backend.clear();
     await _backend.clearBatchLeads();
-    debugPrint('[TodayDialedHistory] Cleared all local call history and batch leads.');
+    await CallBucketService.clear();
+    debugPrint(
+      '[TodayDialedHistory] Cleared all local call history and batch leads.',
+    );
   }
 
   // --- 15-Minute Batch Queue Operations ---
 
   /// Save freshly fetched 15 batch leads from server into SQLite table current_batch_leads
-  Future<void> saveBatchLeads(List<Map<String, dynamic>> leads, {required DateTime expiresAt}) async {
+  Future<void> saveBatchLeads(
+    List<Map<String, dynamic>> leads, {
+    required DateTime expiresAt,
+  }) async {
     await _backend.saveBatchLeads(leads, expiresAt: expiresAt);
   }
 
   /// Proactively append new leads to the current active batch and reset the lease expiration
-  Future<void> appendBatchLeads(List<Map<String, dynamic>> leads, {required DateTime expiresAt}) async {
+  Future<void> appendBatchLeads(
+    List<Map<String, dynamic>> leads, {
+    required DateTime expiresAt,
+  }) async {
     await _backend.appendBatchLeads(leads, expiresAt: expiresAt);
   }
 
@@ -835,7 +926,12 @@ class TodayDialedHistoryService {
   }) async {
     final last10 = normalizeLast10(phoneNumber);
     if (last10.isEmpty) return;
-    await _backend.updateBatchLeadStatus(last10, status: status, duration: duration, callStatus: callStatus);
+    await _backend.updateBatchLeadStatus(
+      last10,
+      status: status,
+      duration: duration,
+      callStatus: callStatus,
+    );
   }
 
   /// Find a lead in the current batch by phone number

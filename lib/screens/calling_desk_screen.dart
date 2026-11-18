@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:callnow_new/constants/lead_stages.dart';
 import 'package:callnow_new/screens/call_reports_screen.dart';
 import 'package:callnow_new/services/api_service.dart';
+import 'package:callnow_new/services/call_bucket_service.dart';
 import 'package:callnow_new/services/call_tracking_service.dart';
 import 'package:callnow_new/services/calling_preferences_service.dart';
 import 'package:callnow_new/services/config_service.dart';
@@ -25,7 +26,8 @@ class CallingDeskScreen extends StatefulWidget {
   static void clearSessionProcessedLeads() => _sessionProcessedLeadIds.clear();
 
   @visibleForTesting
-  static Set<String> get sessionProcessedLeadIds => Set.unmodifiable(_sessionProcessedLeadIds);
+  static Set<String> get sessionProcessedLeadIds =>
+      Set.unmodifiable(_sessionProcessedLeadIds);
 
   static void markLeadProcessed(String id) {
     if (id.isNotEmpty) _sessionProcessedLeadIds.add(id);
@@ -50,31 +52,25 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   final List<Map<String, dynamic>> _leads = [];
   int _currentIndex = 0;
   bool _isLoading = true;
-  bool _isFetchingMore = false;
   bool _isSubmitting = false;
   String? _errorMessage;
 
-  /// Bucket tracking — 15 calls per fill, valid for 15 minutes only.
-  DateTime? _bucketFilledAt;
-  static const Duration _bucketExpiryDuration = Duration(minutes: 15);
-  static const Duration _bucketExpirySafetyThreshold = Duration(minutes: 3);
+  /// Server-owned bucket tracking. The mobile cache never extends this lease.
+  String? _bucketId;
+  DateTime? _bucketExpiresAt;
 
   /// True when the current bucket has expired (15 minutes since last fill).
   bool get _isBucketExpired {
-    if (_bucketFilledAt == null) return true;
-    return DateTime.now().difference(_bucketFilledAt!) >= _bucketExpiryDuration;
+    if (_bucketExpiresAt == null) return true;
+    return !DateTime.now().isBefore(_bucketExpiresAt!);
   }
 
   /// Calculates remaining time before the 15-minute bucket lease expires
   Duration get _bucketRemainingTime {
-    if (_bucketFilledAt == null) return Duration.zero;
-    final elapsed = DateTime.now().difference(_bucketFilledAt!);
-    final remaining = _bucketExpiryDuration - elapsed;
+    if (_bucketExpiresAt == null) return Duration.zero;
+    final remaining = _bucketExpiresAt!.difference(DateTime.now());
     return remaining.isNegative ? Duration.zero : remaining;
   }
-
-  /// True when the current bucket lease is nearing expiry (<= 3 minutes remain)
-  bool get _isBucketNearExpiry => _bucketRemainingTime <= _bucketExpirySafetyThreshold;
 
   /// True when there are leads in the queue that haven't been submitted/skipped yet.
   bool get _hasUncompletedCalls {
@@ -174,10 +170,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   };
 
   List<Map<String, dynamic>> get _allDispositionOptions => [
-        ..._connectedOptions,
-        ..._unconnectedOptions,
-        _voicemailOption,
-      ];
+    ..._connectedOptions,
+    ..._unconnectedOptions,
+    _voicemailOption,
+  ];
 
   final List<String> _quickRemarks = [
     'DND / Do not call',
@@ -192,8 +188,12 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    ConfigService.registerLogoutCallback(CallingDeskScreen.clearSessionProcessedLeads);
-    ConfigService.registerLogoutCallback(PendingCallRecoveryService.clearPendingCall);
+    ConfigService.registerLogoutCallback(
+      CallingDeskScreen.clearSessionProcessedLeads,
+    );
+    ConfigService.registerLogoutCallback(
+      PendingCallRecoveryService.clearPendingCall,
+    );
     _startInactivityTimer();
     _startBatchExpiryCheckTimer();
     _loadInitialBatch();
@@ -244,7 +244,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     _batchExpiryCheckTimer?.cancel();
     _inactivityTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    CallTrackingService.activeCallSession.removeListener(_onCallSessionDetected);
+    CallTrackingService.activeCallSession.removeListener(
+      _onCallSessionDetected,
+    );
     _notesController.dispose();
     super.dispose();
   }
@@ -355,8 +357,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                   ),
                 ],
               ),
-              backgroundColor:
-                  verified.isDialed ? Colors.green.shade800 : Colors.orange.shade800,
+              backgroundColor: verified.isDialed
+                  ? Colors.green.shade800
+                  : Colors.orange.shade800,
               duration: const Duration(seconds: 3),
               behavior: SnackBarBehavior.floating,
             ),
@@ -379,80 +382,69 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   }
 
   Future<void> _loadInitialBatch({bool force = false}) async {
-    // If not forced and we already have leads in memory, retain current lead
-    if (!force && _leads.isNotEmpty && _currentIndex < _leads.length) {
-      return;
-    }
-
-    // If forced refresh but we have an active lead in-progress, delegate to _refreshBatch to preserve state
-    if (force && _currentLead != null) {
-      await _refreshBatch();
-      return;
-    }
-
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
-
-    Map<String, dynamic>? pendingLead;
-    if (!force) {
-      try {
-        pendingLead = await PendingCallRecoveryService.getPendingCall();
-      } catch (_) {}
-    }
-
     try {
-      final batch = await ApiService.getBatchLeads(limit: 15);
-      final pendingId = pendingLead != null ? CallingDeskScreen.getLeadIdentifier(pendingLead) : '';
-      final freshBatch = batch.where((item) {
-        final id = CallingDeskScreen.getLeadIdentifier(item);
-        if (pendingId.isNotEmpty && id == pendingId) return false;
-        return id.isEmpty || !CallingDeskScreen._sessionProcessedLeadIds.contains(id);
-      }).toList();
-
-      final fillTime = DateTime.now();
-      final expiryTime = fillTime.add(_bucketExpiryDuration);
-      final toSave = <Map<String, dynamic>>[];
-      if (pendingLead != null) toSave.add(pendingLead);
-      toSave.addAll(freshBatch);
-      await TodayDialedHistoryService.instance.saveBatchLeads(toSave, expiresAt: expiryTime);
+      final bucket = await ApiService.claimCallBucket();
+      final bucketId = bucket['bucket_id'].toString();
+      final expiresAt = DateTime.parse(bucket['expires_at'].toString());
+      final freshBatch = (bucket['leads'] as List)
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .where((lead) {
+            final id = CallingDeskScreen.getLeadIdentifier(lead);
+            return id.isEmpty ||
+                !CallingDeskScreen._sessionProcessedLeadIds.contains(id);
+          })
+          .toList();
+      final pendingLead = await PendingCallRecoveryService.getPendingCall();
+      if (pendingLead != null) {
+        final pendingId = CallingDeskScreen.getLeadIdentifier(pendingLead);
+        if (!freshBatch.any(
+          (lead) => CallingDeskScreen.getLeadIdentifier(lead) == pendingId,
+        )) {
+          freshBatch.insert(0, pendingLead);
+        }
+      }
+      await TodayDialedHistoryService.instance.saveBatchLeads(
+        freshBatch,
+        expiresAt: expiresAt,
+      );
+      await CallBucketService.save(id: bucketId, expiresAt: expiresAt);
 
       if (mounted) {
         setState(() {
           _leads.clear();
-          if (pendingLead != null) {
-            _leads.add(pendingLead);
-            _isRestoredFromPending = true;
-          } else {
-            _isRestoredFromPending = false;
-          }
           _leads.addAll(freshBatch);
           _currentIndex = 0;
           _isLoading = false;
-          _bucketFilledAt = fillTime; // Mark when this 15-call bucket was filled
+          _bucketId = bucketId;
+          _bucketExpiresAt = expiresAt;
+          _isRestoredFromPending = pendingLead != null;
           _resetFormForCurrentLead();
-          if (_isRestoredFromPending) {
-            _showOutcomes = true;
-          }
+          if (_isRestoredFromPending) _showOutcomes = true;
         });
-
-        if (pendingLead != null) {
-          _verifyCallWithAndroidLog();
-        }
       }
     } catch (e) {
-      if (pendingLead != null && mounted) {
+      // Allow a short offline recovery only while the server-issued lease is valid.
+      final cached = await CallBucketService.readActive();
+      final cachedLeads = await TodayDialedHistoryService.instance
+          .getActiveBatchLeads();
+      if (cached != null &&
+          DateTime.now().isBefore(cached.expiresAt) &&
+          cachedLeads.isNotEmpty &&
+          mounted) {
         setState(() {
           _leads.clear();
-          _leads.add(pendingLead!);
-          _isRestoredFromPending = true;
+          _leads.addAll(cachedLeads);
           _currentIndex = 0;
           _isLoading = false;
+          _bucketId = cached.id;
+          _bucketExpiresAt = cached.expiresAt;
           _resetFormForCurrentLead();
-          _showOutcomes = true;
         });
-        _verifyCallWithAndroidLog();
       } else if (mounted) {
         setState(() {
           _isLoading = false;
@@ -463,25 +455,18 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   }
 
   Future<void> _refreshBatch() async {
-    // Queue empty — fill with a fresh bucket of 15
-    if (_leads.isEmpty) {
-      await _loadInitialBatch(force: true);
-      return;
-    }
-
-    // If bucket hasn't expired and there are uncompleted calls, block the refresh
     if (!_isBucketExpired && _hasUncompletedCalls) {
       if (mounted) {
-        final remainingMinutes =
-            (_bucketExpiryDuration.inSeconds -
-                    DateTime.now().difference(_bucketFilledAt!).inSeconds)
-                .clamp(0, _bucketExpiryDuration.inSeconds) ~/
-            60;
+        final remainingMinutes = _bucketRemainingTime.inMinutes;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
               children: [
-                const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 20),
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -501,130 +486,43 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       return;
     }
 
-    // Bucket expired — clear completed queue and refill with a fresh bucket of 15
+    await TodayDialedHistoryService.instance.clearBatchLeads();
+    await CallBucketService.clear();
+    await _loadInitialBatch(force: true);
+  }
+
+  Future<void> _closeCompletedBucketAndLoadNext() async {
+    final bucketId = _bucketId;
+    if (bucketId == null || bucketId.isEmpty) return;
     try {
-      final batch = await ApiService.getBatchLeads(limit: 15);
-
-      final freshBatch = batch.where((item) {
-        final id = CallingDeskScreen.getLeadIdentifier(item);
-        return id.isEmpty || !CallingDeskScreen._sessionProcessedLeadIds.contains(id);
-      }).toList();
-
-      final fillTime = DateTime.now();
-      final expiryTime = fillTime.add(_bucketExpiryDuration);
-      await TodayDialedHistoryService.instance.saveBatchLeads(freshBatch, expiresAt: expiryTime);
-
+      await ApiService.closeCallBucket(bucketId);
+      await TodayDialedHistoryService.instance.clearBatchLeads();
+      await CallBucketService.clear();
       if (mounted) {
         setState(() {
           _leads.clear();
-          _leads.addAll(freshBatch);
           _currentIndex = 0;
-          _bucketFilledAt = fillTime; // New bucket fill time
-          _resetFormForCurrentLead();
+          _bucketId = null;
+          _bucketExpiresAt = null;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.refresh, color: Colors.white, size: 20),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'New bucket of 15 calls loaded (valid for 15 minutes).',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: Color(0xFF0F766E),
-            behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 3),
-          ),
-        );
       }
+      await _loadInitialBatch(force: true);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to refresh batch: ${e.toString().replaceAll('Exception: ', '')}'),
-            backgroundColor: Colors.red.shade700,
-            behavior: SnackBarBehavior.floating,
+            content: Text(
+              'All calls are saved, but the next bucket could not load: $e',
+            ),
           ),
         );
       }
     }
   }
 
-  /// Top-up batch from server to maintain exactly 15 uncalled leads without wiping the active contact
-  Future<void> _topUpBatch({required int needed}) async {
-    if (_isFetchingMore || needed <= 0) return;
-    setState(() => _isFetchingMore = true);
-
-    try {
-      final batch = await ApiService.getBatchLeads(limit: needed);
-      if (mounted) {
-        final existingIdentifiers = <String>{};
-        for (final l in _leads) {
-          final id = CallingDeskScreen.getLeadIdentifier(l);
-          if (id.isNotEmpty) existingIdentifiers.add(id);
-        }
-        final newLeads = batch.where((lead) {
-          final id = CallingDeskScreen.getLeadIdentifier(lead);
-          if (id.isEmpty) return true;
-          return !CallingDeskScreen._sessionProcessedLeadIds.contains(id) &&
-              !existingIdentifiers.contains(id);
-        }).toList();
-
-        if (newLeads.isNotEmpty) {
-          final fillTime = DateTime.now();
-          final expiryTime = fillTime.add(_bucketExpiryDuration);
-          await TodayDialedHistoryService.instance.appendBatchLeads(newLeads, expiresAt: expiryTime);
-
-          setState(() {
-            _leads.addAll(newLeads);
-            _bucketFilledAt = fillTime; // Reset 15-minute lease clock
-            _isFetchingMore = false;
-          });
-          debugPrint('[CallingDesk] Auto-filled ${newLeads.length} leads. Total uncalled: ${_leads.length - _currentIndex}. Lease clock reset.');
-        } else {
-          setState(() {
-            _bucketFilledAt = DateTime.now();
-            _isFetchingMore = false;
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint('[CallingDesk] Auto-fill batch warning: $e');
-      if (mounted) setState(() => _isFetchingMore = false);
-    }
-  }
-
-  /// Proactively renews the 15-minute bucket lease from server when remaining time is low (<= 3 min)
-  Future<void> _renewBucketForNearExpiry() async {
-    final uncalledCount = (_leads.length - _currentIndex).clamp(0, 999);
-    final needed = (15 - uncalledCount).clamp(1, 15);
-    await _topUpBatch(needed: needed);
-  }
-
-  Future<void> _fetchMoreLeads() async {
-    final uncalledCount = (_leads.length - _currentIndex).clamp(0, 999);
-    if (uncalledCount < 15) {
-      await _topUpBatch(needed: 15 - uncalledCount);
-    }
-  }
-
   void _checkAndAutoFillBatchIfNeeded() {
-    if (!mounted || _isLoading || _isSubmitting || _isFetchingMore) return;
-    if (_leads.isEmpty) return;
-
-    final uncalledCount = (_leads.length - _currentIndex).clamp(0, 999);
-    if (_isBucketNearExpiry || _isBucketExpired || uncalledCount <= 3) {
-      if (uncalledCount < 15) {
-        _topUpBatch(needed: 15 - uncalledCount);
-      } else if (_isBucketNearExpiry) {
-        setState(() => _bucketFilledAt = DateTime.now());
-      }
-    }
+    if (!mounted || _isLoading || _isSubmitting || !_isBucketExpired) return;
+    _refreshBatch();
   }
 
   void _resetFormForCurrentLead() {
@@ -647,7 +545,8 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     // to absorb asynchronous OEM CallLog write latency (ColorOS, MIUI, Vivo)
     if ((_verifiedCallLog == null || !_verifiedCallLog!.isDialed) &&
         CallTrackingService.lastDialTime != null &&
-        DateTime.now().difference(CallTrackingService.lastDialTime!).inSeconds < 60) {
+        DateTime.now().difference(CallTrackingService.lastDialTime!).inSeconds <
+            60) {
       await Future.delayed(const Duration(milliseconds: 1200));
       if (mounted) {
         await _verifyCallWithAndroidLog(showToast: false);
@@ -677,7 +576,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
             backgroundColor: const Color(0xFFDC2626),
             behavior: SnackBarBehavior.floating,
             duration: const Duration(seconds: 5),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
             action: SnackBarAction(
               label: 'SETTINGS',
               textColor: Colors.yellowAccent,
@@ -689,7 +590,8 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       return;
     }
 
-    final bool isDialed = _verifiedCallLog != null && _verifiedCallLog!.isDialed;
+    final bool isDialed =
+        _verifiedCallLog != null && _verifiedCallLog!.isDialed;
     if (!isDialed) {
       if (mounted) {
         setState(() {
@@ -712,7 +614,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
             backgroundColor: const Color(0xFFDC2626),
             behavior: SnackBarBehavior.floating,
             duration: const Duration(seconds: 4),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
           ),
         );
       }
@@ -780,22 +684,22 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                     color: !isConnected
                         ? const Color(0xFFFFEDD5)
                         : (isShort
-                            ? const Color(0xFFFEF3C7)
-                            : const Color(0xFFDCFCE7)),
+                              ? const Color(0xFFFEF3C7)
+                              : const Color(0xFFDCFCE7)),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
                     !isConnected
                         ? Icons.phone_missed_rounded
                         : (isShort
-                            ? Icons.phone_in_talk_rounded
-                            : Icons.call_made_rounded),
+                              ? Icons.phone_in_talk_rounded
+                              : Icons.call_made_rounded),
                     size: 13,
                     color: !isConnected
                         ? const Color(0xFFEA580C)
                         : (isShort
-                            ? const Color(0xFFD97706)
-                            : const Color(0xFF16A34A)),
+                              ? const Color(0xFFD97706)
+                              : const Color(0xFF16A34A)),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -804,8 +708,8 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                     !isConnected
                         ? '✗ Not Connected'
                         : (isShort
-                            ? '📞 Short Call (${_durationSeconds}s)'
-                            : '✓ Connected'),
+                              ? '📞 Short Call (${_durationSeconds}s)'
+                              : '✓ Connected'),
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
@@ -828,7 +732,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     final mobile = (lead['mobile'] ?? '').toString();
     if (mobile.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No mobile number available for this contact.')),
+        const SnackBar(
+          content: Text('No mobile number available for this contact.'),
+        ),
       );
       return;
     }
@@ -837,11 +743,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       Clipboard.setData(ClipboardData(text: mobile));
     }
 
-    // Pre-dial 15-minute lease protection:
-    // If the current bucket is expired or nearing expiry (less than 3 minutes remain),
-    // proactively fetch fresh numbers to reset the 15-minute clock before placing the call!
-    if (_isBucketNearExpiry || _isBucketExpired) {
-      await _renewBucketForNearExpiry();
+    if (_isBucketExpired) {
+      await _refreshBatch();
+      return;
     }
 
     // Persist this lead immediately to survive low-RAM background process termination
@@ -888,10 +792,15 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
       return;
     }
 
-    final launched = await CallTrackingService.openWhatsApp(mobile, message: msg);
+    final launched = await CallTrackingService.openWhatsApp(
+      mobile,
+      message: msg,
+    );
     if (!launched && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open WhatsApp or WhatsApp Business.')),
+        const SnackBar(
+          content: Text('Could not open WhatsApp or WhatsApp Business.'),
+        ),
       );
     }
   }
@@ -931,11 +840,21 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     });
   }
 
-  void _setFollowupPresetAbsolute({required int hour, required int minute, bool tomorrow = false}) {
+  void _setFollowupPresetAbsolute({
+    required int hour,
+    required int minute,
+    bool tomorrow = false,
+  }) {
     final now = DateTime.now();
     final base = tomorrow ? now.add(const Duration(days: 1)) : now;
     setState(() {
-      _followupDateTime = DateTime(base.year, base.month, base.day, hour, minute);
+      _followupDateTime = DateTime(
+        base.year,
+        base.month,
+        base.day,
+        hour,
+        minute,
+      );
     });
   }
 
@@ -978,19 +897,29 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     final lead = _currentLead;
     if (lead == null) return;
 
-    final bool isDialed = _verifiedCallLog != null && _verifiedCallLog!.isDialed;
+    final bool isDialed =
+        _verifiedCallLog != null && _verifiedCallLog!.isDialed;
     final bool hasNotes = _notesController.text.trim().isNotEmpty;
 
     if (isDialed || hasNotes) {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: const Row(
             children: [
-              Icon(Icons.warning_amber_rounded, color: Color(0xFFF59E0B), size: 24),
+              Icon(
+                Icons.warning_amber_rounded,
+                color: Color(0xFFF59E0B),
+                size: 24,
+              ),
               SizedBox(width: 8),
-              Text('Discard Call Details?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text(
+                'Discard Call Details?',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
             ],
           ),
           content: Text(
@@ -1002,13 +931,18 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w600)),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFEF4444),
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
               onPressed: () => Navigator.pop(ctx, true),
               child: const Text('Discard & Skip'),
@@ -1040,28 +974,33 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
         _currentIndex++;
         _resetFormForCurrentLead();
       });
-      // Check prefetch
-      if (_leads.length - _currentIndex <= 3) {
-        _fetchMoreLeads();
-      }
     } else {
       setState(() {
         _isRestoredFromPending = false;
         _currentIndex++;
         _resetFormForCurrentLead();
       });
-      _loadInitialBatch(force: true);
+      // The server will only issue a replacement after this bucket is closed.
     }
   }
 
-  void _showEngagementFeedback(Map<String, dynamic>? result, {String? fallbackMessage}) {
+  void _showEngagementFeedback(
+    Map<String, dynamic>? result, {
+    String? fallbackMessage,
+  }) {
     if (result != null && result['engagement'] != null) {
       final dynamic rawEng = result['engagement'];
       final Map<String, dynamic> eng = rawEng is Map<String, dynamic>
           ? rawEng
           : (rawEng is Map ? Map<String, dynamic>.from(rawEng) : {});
-      final xpEarned = (eng['xp_earned'] as num?)?.toInt() ?? int.tryParse(eng['xp_earned']?.toString() ?? '0') ?? 0;
-      final bonusXp = (eng['target_bonus_xp'] as num?)?.toInt() ?? int.tryParse(eng['target_bonus_xp']?.toString() ?? '0') ?? 0;
+      final xpEarned =
+          (eng['xp_earned'] as num?)?.toInt() ??
+          int.tryParse(eng['xp_earned']?.toString() ?? '0') ??
+          0;
+      final bonusXp =
+          (eng['target_bonus_xp'] as num?)?.toInt() ??
+          int.tryParse(eng['target_bonus_xp']?.toString() ?? '0') ??
+          0;
       if (mounted && xpEarned > 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1077,7 +1016,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                     bonusXp > 0
                         ? '🎯 Target Hit! +$xpEarned XP (Bonus included!)'
                         : '+$xpEarned XP Earned!',
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ],
@@ -1131,11 +1073,14 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     final currentLeadSnapshot = Map<String, dynamic>.from(lead);
     final currentRemarksSnapshot = _notesController.text.trim();
 
-    final bool isDialed = _verifiedCallLog != null && _verifiedCallLog!.isDialed;
+    final bool isDialed =
+        _verifiedCallLog != null && _verifiedCallLog!.isDialed;
     final verifiedDur = isDialed ? _verifiedCallLog!.durationSeconds : 0;
 
     // Connected outcomes require verified outgoing talk time
-    final isConnectedOutcome = _connectedOptions.any((o) => o['id'] == _selectedDisposition);
+    final isConnectedOutcome = _connectedOptions.any(
+      (o) => o['id'] == _selectedDisposition,
+    );
     if (isConnectedOutcome && (!isDialed || verifiedDur == 0)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1206,8 +1151,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     final effectiveTiming = _selectedDisposition == 'IVR_VOICEMAIL'
         ? 'VOICEMAIL'
         : (isConnectedOutcome
-            ? (verifiedDur > 20 ? 'CONNECTED_CONVERSATION' : 'CONNECTED_SHORT')
-            : 'NOT_CONNECTED');
+              ? (verifiedDur > 20
+                    ? 'CONNECTED_CONVERSATION'
+                    : 'CONNECTED_SHORT')
+              : 'NOT_CONNECTED');
 
     // Auto-schedule callback 2 hours later if CallBack/Busy was selected without explicit preset
     if (_selectedDisposition == 'CALLBACK_BUSY' && _followupDateTime == null) {
@@ -1216,7 +1163,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
 
     String? followupIso;
     if (_followupDateTime != null) {
-      followupIso = _followupDateTime!.toIso8601String().replaceAll('T', ' ').substring(0, 19);
+      followupIso = _followupDateTime!
+          .toIso8601String()
+          .replaceAll('T', ' ')
+          .substring(0, 19);
       try {
         await FollowupService.instance.addFollowup(
           customerName: lead['name']?.toString() ?? 'Customer',
@@ -1254,12 +1204,15 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
         callId: leadId,
         source: source,
         status: statusLabel,
-        notes: _notesController.text.trim().isNotEmpty ? _notesController.text.trim() : null,
+        notes: _notesController.text.trim().isNotEmpty
+            ? _notesController.text.trim()
+            : null,
         durationSeconds: verifiedDur,
         timingClassification: effectiveTiming,
         nextFollowupAt: followupIso,
         loanQualification: null, // Strictly Client Contact!
         phoneNumber: lead['mobile']?.toString(),
+        bucketId: _bucketId,
       );
 
       if (mounted) {
@@ -1297,7 +1250,8 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
 
         _showEngagementFeedback(
           result,
-          fallbackMessage: 'Call saved: $statusLabel for ${lead['name']}$followupNotice',
+          fallbackMessage:
+              'Call saved: $statusLabel for ${lead['name']}$followupNotice',
         );
 
         setState(() {
@@ -1307,18 +1261,16 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           _resetFormForCurrentLead();
         });
 
-        // Proactively renew bucket if lease is nearing expiry (<= 3 min), or pre-fetch when queue runs low
-        if (_isBucketNearExpiry || _isBucketExpired) {
-          _renewBucketForNearExpiry();
-        } else if (_leads.length - _currentIndex <= 3) {
-          _fetchMoreLeads();
+        if (_currentIndex >= _leads.length) {
+          await _closeCompletedBucketAndLoadNext();
         }
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isSubmitting = false);
         final errStr = e.toString();
-        final isAuthOrExpired = errStr.contains('403') ||
+        final isAuthOrExpired =
+            errStr.contains('403') ||
             errStr.toLowerCase().contains('not authoriz') ||
             errStr.toLowerCase().contains('no authorise') ||
             errStr.toLowerCase().contains('expired');
@@ -1357,11 +1309,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
             _resetFormForCurrentLead();
           });
 
-          if (_leads.isEmpty || _currentIndex >= _leads.length) {
-            _loadInitialBatch(force: true);
-          } else if (_leads.length - _currentIndex <= 3) {
-            _fetchMoreLeads();
-          }
+          await _refreshBatch();
           return;
         }
 
@@ -1385,12 +1333,16 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     String? statusLabel,
   }) {
     final formKey = GlobalKey<FormState>();
-    final nameCtrl = TextEditingController(text: leadData['name']?.toString() ?? '');
+    final nameCtrl = TextEditingController(
+      text: leadData['name']?.toString() ?? '',
+    );
 
     // Format 10-digit mobile number cleanly
     String rawMobile = leadData['mobile']?.toString() ?? '';
     final digits = rawMobile.replaceAll(RegExp(r'\D'), '');
-    final cleanMobile = digits.length > 10 ? digits.substring(digits.length - 10) : digits;
+    final cleanMobile = digits.length > 10
+        ? digits.substring(digits.length - 10)
+        : digits;
     final mobileCtrl = TextEditingController(text: cleanMobile);
 
     final companyCtrl = TextEditingController(
@@ -1398,7 +1350,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           ? leadData['company'].toString()
           : '',
     );
-    final amountCtrl = TextEditingController(text: leadData['package']?.toString() ?? '');
+    final amountCtrl = TextEditingController(
+      text: leadData['package']?.toString() ?? '',
+    );
     final salaryCtrl = TextEditingController();
     final salaryAccountCtrl = TextEditingController();
     final bankCtrl = TextEditingController();
@@ -1408,7 +1362,8 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           : (leadData['other_info']?.toString() ?? ''),
     );
 
-    String selectedLoanType = LeadStageHelper.loanTypes.contains(leadData['loan_type'])
+    String selectedLoanType =
+        LeadStageHelper.loanTypes.contains(leadData['loan_type'])
         ? leadData['loan_type'].toString()
         : LeadStageHelper.loanTypes.first;
     String selectedStage = 'LEAD';
@@ -1449,7 +1404,11 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                               color: const Color(0xFFDCFCE7),
                               borderRadius: BorderRadius.circular(10),
                             ),
-                            child: const Icon(Icons.person_add_alt_1_rounded, color: Color(0xFF16A34A), size: 22),
+                            child: const Icon(
+                              Icons.person_add_alt_1_rounded,
+                              color: Color(0xFF16A34A),
+                              size: 22,
+                            ),
                           ),
                           const SizedBox(width: 12),
                           const Expanded(
@@ -1466,13 +1425,19 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                                 ),
                                 Text(
                                   'Customer interested — capture details and convert to Lead',
-                                  style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: Color(0xFF64748B),
+                                  ),
                                 ),
                               ],
                             ),
                           ),
                           IconButton(
-                            icon: const Icon(Icons.close_rounded, color: Color(0xFF64748B)),
+                            icon: const Icon(
+                              Icons.close_rounded,
+                              color: Color(0xFF64748B),
+                            ),
                             onPressed: () => Navigator.pop(modalCtx),
                           ),
                         ],
@@ -1486,11 +1451,18 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                         controller: nameCtrl,
                         decoration: InputDecoration(
                           labelText: 'Customer Full Name *',
-                          prefixIcon: const Icon(Icons.person_outline, size: 20),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          prefixIcon: const Icon(
+                            Icons.person_outline,
+                            size: 20,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                           isDense: true,
                         ),
-                        validator: (v) => v == null || v.trim().isEmpty ? 'Name is required' : null,
+                        validator: (v) => v == null || v.trim().isEmpty
+                            ? 'Name is required'
+                            : null,
                       ),
                       const SizedBox(height: 11),
 
@@ -1501,14 +1473,20 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                         maxLength: 10,
                         decoration: InputDecoration(
                           labelText: '10-Digit Mobile Number *',
-                          prefixIcon: const Icon(Icons.phone_outlined, size: 20),
+                          prefixIcon: const Icon(
+                            Icons.phone_outlined,
+                            size: 20,
+                          ),
                           prefixText: '+91 ',
                           counterText: '',
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                           isDense: true,
                         ),
                         validator: (v) {
-                          if (v == null || v.trim().isEmpty) return 'Mobile is required';
+                          if (v == null || v.trim().isEmpty)
+                            return 'Mobile is required';
                           final clean = v.replaceAll(RegExp(r'\D'), '');
                           if (clean.length != 10) return 'Must be 10 digits';
                           return null;
@@ -1524,8 +1502,13 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                               controller: companyCtrl,
                               decoration: InputDecoration(
                                 labelText: 'Company / Employer',
-                                prefixIcon: const Icon(Icons.business_outlined, size: 20),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                prefixIcon: const Icon(
+                                  Icons.business_outlined,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                                 isDense: true,
                               ),
                             ),
@@ -1537,11 +1520,18 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                               keyboardType: TextInputType.number,
                               decoration: InputDecoration(
                                 labelText: 'Required Loan (₹) *',
-                                prefixIcon: const Icon(Icons.currency_rupee, size: 20),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                prefixIcon: const Icon(
+                                  Icons.currency_rupee,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                                 isDense: true,
                               ),
-                              validator: (v) => v == null || v.trim().isEmpty ? 'Loan amount is required' : null,
+                              validator: (v) => v == null || v.trim().isEmpty
+                                  ? 'Loan amount is required'
+                                  : null,
                             ),
                           ),
                         ],
@@ -1557,8 +1547,13 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                               keyboardType: TextInputType.number,
                               decoration: InputDecoration(
                                 labelText: 'Net Monthly Salary (₹)',
-                                prefixIcon: const Icon(Icons.account_balance_wallet_outlined, size: 20),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                prefixIcon: const Icon(
+                                  Icons.account_balance_wallet_outlined,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                                 isDense: true,
                               ),
                             ),
@@ -1569,8 +1564,13 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                               controller: salaryAccountCtrl,
                               decoration: InputDecoration(
                                 labelText: 'Salary Account Bank',
-                                prefixIcon: const Icon(Icons.account_balance_outlined, size: 20),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                prefixIcon: const Icon(
+                                  Icons.account_balance_outlined,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                                 isDense: true,
                               ),
                             ),
@@ -1588,15 +1588,27 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                               isExpanded: true,
                               decoration: InputDecoration(
                                 labelText: 'Loan Type *',
-                                prefixIcon: const Icon(Icons.category_outlined, size: 20),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                prefixIcon: const Icon(
+                                  Icons.category_outlined,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                                 isDense: true,
                               ),
                               items: LeadStageHelper.loanTypes.map((t) {
-                                return DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(fontSize: 12.5)));
+                                return DropdownMenuItem(
+                                  value: t,
+                                  child: Text(
+                                    t,
+                                    style: const TextStyle(fontSize: 12.5),
+                                  ),
+                                );
                               }).toList(),
                               onChanged: (val) {
-                                if (val != null) setModalState(() => selectedLoanType = val);
+                                if (val != null)
+                                  setModalState(() => selectedLoanType = val);
                               },
                             ),
                           ),
@@ -1606,8 +1618,13 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                               controller: bankCtrl,
                               decoration: InputDecoration(
                                 labelText: 'Preferred Bank',
-                                prefixIcon: const Icon(Icons.storefront_outlined, size: 20),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                prefixIcon: const Icon(
+                                  Icons.storefront_outlined,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                                 isDense: true,
                               ),
                             ),
@@ -1621,17 +1638,42 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                         initialValue: selectedTemp,
                         decoration: InputDecoration(
                           labelText: 'Temperature',
-                          prefixIcon: const Icon(Icons.whatshot_rounded, size: 20, color: Colors.deepOrange),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          prefixIcon: const Icon(
+                            Icons.whatshot_rounded,
+                            size: 20,
+                            color: Colors.deepOrange,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                           isDense: true,
                         ),
                         items: const [
-                          DropdownMenuItem(value: 'Hot', child: Text('🔥 Hot', style: TextStyle(fontSize: 12.5))),
-                          DropdownMenuItem(value: 'Warm', child: Text('☀️ Warm', style: TextStyle(fontSize: 12.5))),
-                          DropdownMenuItem(value: 'Cold', child: Text('❄️ Cold', style: TextStyle(fontSize: 12.5))),
+                          DropdownMenuItem(
+                            value: 'Hot',
+                            child: Text(
+                              '🔥 Hot',
+                              style: TextStyle(fontSize: 12.5),
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Warm',
+                            child: Text(
+                              '☀️ Warm',
+                              style: TextStyle(fontSize: 12.5),
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Cold',
+                            child: Text(
+                              '❄️ Cold',
+                              style: TextStyle(fontSize: 12.5),
+                            ),
+                          ),
                         ],
                         onChanged: (val) {
-                          if (val != null) setModalState(() => selectedTemp = val);
+                          if (val != null)
+                            setModalState(() => selectedTemp = val);
                         },
                       ),
                       const SizedBox(height: 11),
@@ -1643,7 +1685,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                         decoration: InputDecoration(
                           labelText: 'Notes / Remarks',
                           prefixIcon: const Icon(Icons.notes_rounded, size: 20),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                           isDense: true,
                         ),
                       ),
@@ -1652,7 +1696,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                       // Submit Button
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF10B981), // Emerald green
+                          backgroundColor: const Color(
+                            0xFF10B981,
+                          ), // Emerald green
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           elevation: 2,
@@ -1667,65 +1713,93 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                                 setModalState(() => isModalSubmitting = true);
 
                                 try {
-                                  final leadId = PendingCallRecoveryService.extractLeadId(leadData);
-                                  final source = PendingCallRecoveryService.extractSource(leadData);
+                                  final leadId =
+                                      PendingCallRecoveryService.extractLeadId(
+                                        leadData,
+                                      );
+                                  final source =
+                                      PendingCallRecoveryService.extractSource(
+                                        leadData,
+                                      );
 
                                   // Submit call with loan qualification (converts Client Contact -> Lead on server)
-                                  final result = await ApiService.submitCallResult(
-                                    callId: leadId,
-                                    source: source,
-                                    status: statusLabel ?? 'Enquiry/ Intrested',
-                                    notes: remarksCtrl.text.trim().isNotEmpty ? remarksCtrl.text.trim() : null,
-                                    durationSeconds: verifiedDur ?? 0,
-                                    timingClassification: effectiveTiming ?? 'CONNECTED_CONVERSATION',
-                                    nextFollowupAt: followupIso,
-                                    loanQualification: {
-                                      'loan_type': selectedLoanType,
-                                      'loan_amount': amountCtrl.text.trim(),
-                                      'net_salary': salaryCtrl.text.trim(),
-                                      'salary_account': salaryAccountCtrl.text.trim(),
-                                      'bank_name': bankCtrl.text.trim(),
-                                      'stage': selectedTemp,
-                                      'priority': selectedPriority,
-                                      'lead_status': selectedStage,
-                                    },
-                                    phoneNumber: leadData['mobile']?.toString(),
-                                  );
+                                  final result =
+                                      await ApiService.submitCallResult(
+                                        callId: leadId,
+                                        source: source,
+                                        status:
+                                            statusLabel ?? 'Enquiry/ Intrested',
+                                        notes:
+                                            remarksCtrl.text.trim().isNotEmpty
+                                            ? remarksCtrl.text.trim()
+                                            : null,
+                                        durationSeconds: verifiedDur ?? 0,
+                                        timingClassification:
+                                            effectiveTiming ??
+                                            'CONNECTED_CONVERSATION',
+                                        nextFollowupAt: followupIso,
+                                        bucketId: _bucketId,
+                                        loanQualification: {
+                                          'loan_type': selectedLoanType,
+                                          'loan_amount': amountCtrl.text.trim(),
+                                          'net_salary': salaryCtrl.text.trim(),
+                                          'salary_account': salaryAccountCtrl
+                                              .text
+                                              .trim(),
+                                          'bank_name': bankCtrl.text.trim(),
+                                          'stage': selectedTemp,
+                                          'priority': selectedPriority,
+                                          'lead_status': selectedStage,
+                                        },
+                                        phoneNumber: leadData['mobile']
+                                            ?.toString(),
+                                      );
 
                                   if (modalCtx.mounted) Navigator.pop(modalCtx);
 
                                   if (mounted) {
-                                    final leadIdentifier = CallingDeskScreen.getLeadIdentifier(leadData);
-                                    CallingDeskScreen.markLeadProcessed(leadIdentifier);
+                                    final leadIdentifier =
+                                        CallingDeskScreen.getLeadIdentifier(
+                                          leadData,
+                                        );
+                                    CallingDeskScreen.markLeadProcessed(
+                                      leadIdentifier,
+                                    );
                                     await PendingCallRecoveryService.clearPendingCall();
 
                                     // Record in SQLite Today's Dialed History
-                                    final mobileNum = leadData['mobile']?.toString() ?? '';
+                                    final mobileNum =
+                                        leadData['mobile']?.toString() ?? '';
                                     if (mobileNum.isNotEmpty) {
-                                      await TodayDialedHistoryService.instance.updateBatchLeadStatus(
-                                        mobileNum,
-                                        status: 'COMPLETED',
-                                        duration: verifiedDur ?? 0,
-                                        callStatus: 'CONVERTED_LEAD',
-                                      );
+                                      await TodayDialedHistoryService.instance
+                                          .updateBatchLeadStatus(
+                                            mobileNum,
+                                            status: 'COMPLETED',
+                                            duration: verifiedDur ?? 0,
+                                            callStatus: 'CONVERTED_LEAD',
+                                          );
                                     }
                                     if (mobileNum.isNotEmpty) {
-                                      await TodayDialedHistoryService.instance.recordDialedCall(
-                                        recordId: leadId,
-                                        source: source,
-                                        status: 'CONVERTED_LEAD',
-                                        duration: verifiedDur ?? 0,
-                                        phoneNumber: mobileNum,
-                                        name: nameCtrl.text.trim(),
-                                        company: leadData['company']?.toString(),
-                                        timingTier: effectiveTiming,
-                                        dialedAt: DateTime.now().toIso8601String(),
-                                      );
+                                      await TodayDialedHistoryService.instance
+                                          .recordDialedCall(
+                                            recordId: leadId,
+                                            source: source,
+                                            status: 'CONVERTED_LEAD',
+                                            duration: verifiedDur ?? 0,
+                                            phoneNumber: mobileNum,
+                                            name: nameCtrl.text.trim(),
+                                            company: leadData['company']
+                                                ?.toString(),
+                                            timingTier: effectiveTiming,
+                                            dialedAt: DateTime.now()
+                                                .toIso8601String(),
+                                          );
                                     }
 
                                     _showEngagementFeedback(
                                       result,
-                                      fallbackMessage: 'Contact converted to Lead for ${nameCtrl.text.trim()}! Added to pipeline.',
+                                      fallbackMessage:
+                                          'Contact converted to Lead for ${nameCtrl.text.trim()}! Added to pipeline.',
                                     );
 
                                     setState(() {
@@ -1735,43 +1809,70 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                                       _resetFormForCurrentLead();
                                     });
 
-                                    if (_leads.length - _currentIndex <= 3) {
-                                      _fetchMoreLeads();
+                                    if (_currentIndex >= _leads.length) {
+                                      await _closeCompletedBucketAndLoadNext();
                                     }
                                   }
                                 } catch (e) {
-                                  setModalState(() => isModalSubmitting = false);
+                                  setModalState(
+                                    () => isModalSubmitting = false,
+                                  );
                                   if (mounted) {
                                     final errStr = e.toString();
-                                    final isAuthOrExpired = errStr.contains('403') ||
-                                        errStr.toLowerCase().contains('not authoriz') ||
-                                        errStr.toLowerCase().contains('no authorise') ||
-                                        errStr.toLowerCase().contains('expired');
+                                    final isAuthOrExpired =
+                                        errStr.contains('403') ||
+                                        errStr.toLowerCase().contains(
+                                          'not authoriz',
+                                        ) ||
+                                        errStr.toLowerCase().contains(
+                                          'no authorise',
+                                        ) ||
+                                        errStr.toLowerCase().contains(
+                                          'expired',
+                                        );
 
                                     if (isAuthOrExpired) {
-                                      if (modalCtx.mounted) Navigator.pop(modalCtx);
-                                      final leadIdentifier = CallingDeskScreen.getLeadIdentifier(leadData);
-                                      CallingDeskScreen.markLeadProcessed(leadIdentifier);
+                                      if (modalCtx.mounted)
+                                        Navigator.pop(modalCtx);
+                                      final leadIdentifier =
+                                          CallingDeskScreen.getLeadIdentifier(
+                                            leadData,
+                                          );
+                                      CallingDeskScreen.markLeadProcessed(
+                                        leadIdentifier,
+                                      );
                                       await PendingCallRecoveryService.clearPendingCall();
 
                                       if (mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
                                           SnackBar(
                                             content: const Row(
                                               children: [
-                                                Icon(Icons.info_outline, color: Colors.white, size: 20),
+                                                Icon(
+                                                  Icons.info_outline,
+                                                  color: Colors.white,
+                                                  size: 20,
+                                                ),
                                                 SizedBox(width: 8),
                                                 Expanded(
                                                   child: Text(
                                                     'Record assignment on server expired or reallocated. Moving to next lead.',
-                                                    style: TextStyle(fontWeight: FontWeight.w600),
+                                                    style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
                                                   ),
                                                 ),
                                               ],
                                             ),
-                                            backgroundColor: Colors.orange.shade800,
+                                            backgroundColor:
+                                                Colors.orange.shade800,
                                             behavior: SnackBarBehavior.floating,
-                                            duration: const Duration(seconds: 4),
+                                            duration: const Duration(
+                                              seconds: 4,
+                                            ),
                                           ),
                                         );
                                       }
@@ -1783,17 +1884,15 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                                         _resetFormForCurrentLead();
                                       });
 
-                                      if (_leads.isEmpty || _currentIndex >= _leads.length) {
-                                        _loadInitialBatch(force: true);
-                                      } else if (_leads.length - _currentIndex <= 3) {
-                                        _fetchMoreLeads();
-                                      }
+                                      await _refreshBatch();
                                       return;
                                     }
 
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
-                                        content: Text('Failed to convert contact: $e'),
+                                        content: Text(
+                                          'Failed to convert contact: $e',
+                                        ),
                                         backgroundColor: Colors.red.shade700,
                                         behavior: SnackBarBehavior.floating,
                                       ),
@@ -1805,12 +1904,20 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
                               )
                             : const Icon(Icons.check_circle_rounded, size: 20),
                         label: Text(
-                          isModalSubmitting ? 'Converting Contact...' : 'Convert to Lead & Save',
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                          isModalSubmitting
+                              ? 'Converting Contact...'
+                              : 'Convert to Lead & Save',
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ],
@@ -1842,7 +1949,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           child: ElevatedButton(
             onPressed: _isSubmitting ? null : _submitAndNext,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50), // Bright green matching screenshots
+              backgroundColor: const Color(
+                0xFF4CAF50,
+              ), // Bright green matching screenshots
               foregroundColor: Colors.white,
               elevation: 1.5,
               shape: RoundedRectangleBorder(
@@ -1853,7 +1962,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                 ? const SizedBox(
                     width: 20,
                     height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
                   )
                 : const Text(
                     'Save & Next',
@@ -1870,7 +1982,11 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           onPressed: _isSubmitting ? null : _skipLead,
           child: const Text(
             'Skip this lead',
-            style: TextStyle(fontSize: 12.5, color: Color(0xFF64748B), fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: 12.5,
+              color: Color(0xFF64748B),
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ],
@@ -1885,7 +2001,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 16),
-            Text('Fetching call queue from server...', style: TextStyle(fontSize: 14, color: Color(0xFF64748B))),
+            Text(
+              'Fetching call queue from server...',
+              style: TextStyle(fontSize: 14, color: Color(0xFF64748B)),
+            ),
           ],
         ),
       );
@@ -1898,11 +2017,19 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.error_outline, size: 64, color: Colors.redAccent),
+              const Icon(
+                Icons.error_outline,
+                size: 64,
+                color: Colors.redAccent,
+              ),
               const SizedBox(height: 16),
               const Text(
                 'Failed to load contacts',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF0F172A),
+                ),
               ),
               const SizedBox(height: 8),
               Text(
@@ -1926,8 +2053,8 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     if (lead == null) {
       // Determine whether we can refill now or must wait for bucket expiry
       final canRefill = _isBucketExpired || _leads.isEmpty;
-      final waitText = _bucketFilledAt != null && !_isBucketExpired
-          ? 'Bucket expires in ~${((_bucketExpiryDuration.inSeconds - DateTime.now().difference(_bucketFilledAt!).inSeconds).clamp(0, _bucketExpiryDuration.inSeconds) ~/ 60)} min.'
+      final waitText = _bucketExpiresAt != null && !_isBucketExpired
+          ? 'Bucket expires in ~${_bucketRemainingTime.inMinutes} min.'
           : '';
       return Center(
         child: Padding(
@@ -1941,19 +2068,31 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                   color: Colors.green.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.task_alt_rounded, size: 72, color: Colors.green),
+                child: const Icon(
+                  Icons.task_alt_rounded,
+                  size: 72,
+                  color: Colors.green,
+                ),
               ),
               const SizedBox(height: 20),
               const Text(
                 'All Calls Completed!',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF0F172A),
+                ),
               ),
               const SizedBox(height: 8),
               if (waitText.isNotEmpty)
                 Text(
                   waitText,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFF9A3412), fontWeight: FontWeight.w600, fontSize: 13),
+                  style: const TextStyle(
+                    color: Color(0xFF9A3412),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
                 ),
               if (waitText.isNotEmpty) const SizedBox(height: 8),
               Text(
@@ -1980,15 +2119,16 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     final company = (lead['company'] ?? '').toString().trim();
     final pkg = (lead['package'] ?? '').toString().trim();
     final formattedPkg = _formatPackageAmount(pkg);
-    final otherInfo = (lead['other_info'] ??
-            lead['otherInfo'] ??
-            lead['notes'] ??
-            lead['remarks'] ??
-            lead['CUST_OTHER_INFO'] ??
-            lead['MAINDATABASE_OTHER_INFO'] ??
-            '')
-        .toString()
-        .trim();
+    final otherInfo =
+        (lead['other_info'] ??
+                lead['otherInfo'] ??
+                lead['notes'] ??
+                lead['remarks'] ??
+                lead['CUST_OTHER_INFO'] ??
+                lead['MAINDATABASE_OTHER_INFO'] ??
+                '')
+            .toString()
+            .trim();
 
     // Lead count & call status from API
     final callCount = int.tryParse(lead['call_count']?.toString() ?? '0') ?? 0;
@@ -2081,7 +2221,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: isCalledBefore
                       ? const Color(0xFFDCFCE7) // green tint = called
@@ -2097,7 +2240,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      isCalledBefore ? Icons.check_circle_rounded : Icons.phone_missed_rounded,
+                      isCalledBefore
+                          ? Icons.check_circle_rounded
+                          : Icons.phone_missed_rounded,
                       size: 12,
                       color: isCalledBefore
                           ? const Color(0xFF16A34A)
@@ -2129,7 +2274,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
         // ── Contact Details Card ──────────────────────────────────────────
         Card(
           elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           color: Colors.white,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -2197,22 +2344,12 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                   _buildInfoRow(
                     icon: Icons.notes_rounded,
                     label: 'Other Info',
-                    valueWidget: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAFC),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                      ),
-                      child: Text(
-                        otherInfo,
-                        style: const TextStyle(
-                          fontSize: 13.5,
-                          color: Color(0xFF334155),
-                          fontWeight: FontWeight.w500,
-                          height: 1.3,
-                        ),
+                    valueWidget: Text(
+                      otherInfo,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        color: Color(0xFF334155),
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ),
@@ -2226,7 +2363,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
         // ── Action Buttons Card ───────────────────────────────────────────
         Card(
           elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           color: Colors.white,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -2295,7 +2434,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                         ? const SizedBox(
                             width: 18,
                             height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
                           )
                         : const Text(
                             'Get Status',
@@ -2312,7 +2454,8 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                 if (_showOutcomes) ...[
                   const SizedBox(height: 10),
                   _buildDispositionCard(),
-                  if (_selectedDisposition == 'CALLBACK_BUSY' || _followupDateTime != null) ...[
+                  if (_selectedDisposition == 'CALLBACK_BUSY' ||
+                      _followupDateTime != null) ...[
                     const SizedBox(height: 10),
                     _buildFollowupCard(),
                   ],
@@ -2367,7 +2510,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                       ),
                       const SizedBox(width: 6),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFFEEF2FF),
                           borderRadius: BorderRadius.circular(4),
@@ -2401,7 +2547,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                   value: progress,
                   minHeight: 3,
                   backgroundColor: const Color(0xFFE2E8F0),
-                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                    Color(0xFF10B981),
+                  ),
                 ),
               ),
             ],
@@ -2470,12 +2618,7 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
               ],
             ),
             child: Center(
-              child: iconWidget ??
-                  Icon(
-                    icon,
-                    color: Colors.white,
-                    size: 22,
-                  ),
+              child: iconWidget ?? Icon(icon, color: Colors.white, size: 22),
             ),
           ),
         ),
@@ -2487,8 +2630,11 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
   Widget _buildDispositionCard() {
     final bool isConnected = _durationSeconds > 0;
     final bool isShort = _durationSeconds > 0 && _durationSeconds <= 18;
-    final isConnectedOutcomes = isConnected && !_allowUnconnectedOverrideForShortCalls;
-    final options = isConnectedOutcomes ? _connectedOptions : _unconnectedOptions;
+    final isConnectedOutcomes =
+        isConnected && !_allowUnconnectedOverrideForShortCalls;
+    final options = isConnectedOutcomes
+        ? _connectedOptions
+        : _unconnectedOptions;
 
     // Header badge styling & text
     Color badgeBg;
@@ -2541,7 +2687,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
                 decoration: BoxDecoration(
                   color: badgeBg,
                   borderRadius: BorderRadius.circular(20),
@@ -2566,14 +2715,20 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                 InkWell(
                   onTap: () {
                     setState(() {
-                      _allowUnconnectedOverrideForShortCalls = !_allowUnconnectedOverrideForShortCalls;
+                      _allowUnconnectedOverrideForShortCalls =
+                          !_allowUnconnectedOverrideForShortCalls;
                     });
                   },
                   borderRadius: BorderRadius.circular(6),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     child: Text(
-                      _allowUnconnectedOverrideForShortCalls ? 'Show Connected' : 'Show Unconnected',
+                      _allowUnconnectedOverrideForShortCalls
+                          ? 'Show Connected'
+                          : 'Show Unconnected',
                       style: const TextStyle(
                         fontSize: 11.5,
                         color: Color(0xFF2563EB),
@@ -2691,7 +2846,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                  color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF475569),
+                  color: isSelected
+                      ? const Color(0xFF0F172A)
+                      : const Color(0xFF475569),
                   letterSpacing: 0.1,
                 ),
               ),
@@ -2709,10 +2866,14 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: isFollowupSet ? const Color(0xFFFFFBEB) : const Color(0xFFF6FAF7),
+        color: isFollowupSet
+            ? const Color(0xFFFFFBEB)
+            : const Color(0xFFF6FAF7),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: isFollowupSet ? const Color(0xFFFDE68A) : const Color(0xFFD1FAE5),
+          color: isFollowupSet
+              ? const Color(0xFFFDE68A)
+              : const Color(0xFFD1FAE5),
           width: 1.2,
         ),
         boxShadow: [
@@ -2731,7 +2892,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
             children: [
               Icon(
                 Icons.alarm_on_rounded,
-                color: isFollowupSet ? const Color(0xFFD97706) : const Color(0xFF059669),
+                color: isFollowupSet
+                    ? const Color(0xFFD97706)
+                    : const Color(0xFF059669),
                 size: 16,
               ),
               const SizedBox(width: 6),
@@ -2743,7 +2906,9 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
-                    color: isFollowupSet ? const Color(0xFF92400E) : const Color(0xFF065F46),
+                    color: isFollowupSet
+                        ? const Color(0xFF92400E)
+                        : const Color(0xFF065F46),
                   ),
                 ),
               ),
@@ -2768,7 +2933,11 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
             children: [
               // Highlighted Date & Time Picker
               ActionChip(
-                avatar: const Icon(Icons.calendar_month_rounded, size: 14, color: Color(0xFF059669)),
+                avatar: const Icon(
+                  Icons.calendar_month_rounded,
+                  size: 14,
+                  color: Color(0xFF059669),
+                ),
                 label: const Text(
                   'Pick Date & Time',
                   style: TextStyle(
@@ -2784,12 +2953,38 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
                 side: const BorderSide(color: Color(0xFFA7F3D0), width: 1.1),
                 onPressed: _pickFollowupDateTime,
               ),
-              _buildPresetChip('+15m', () => _setFollowupPreset(const Duration(minutes: 15))),
-              _buildPresetChip('+30m', () => _setFollowupPreset(const Duration(minutes: 30))),
-              _buildPresetChip('+1h', () => _setFollowupPreset(const Duration(hours: 1))),
-              _buildPresetChip('+2h', () => _setFollowupPreset(const Duration(hours: 2))),
-              _buildPresetChip('Tmrw 10 AM', () => _setFollowupPresetAbsolute(hour: 10, minute: 0, tomorrow: true)),
-              _buildPresetChip('Tmrw 3 PM', () => _setFollowupPresetAbsolute(hour: 15, minute: 0, tomorrow: true)),
+              _buildPresetChip(
+                '+15m',
+                () => _setFollowupPreset(const Duration(minutes: 15)),
+              ),
+              _buildPresetChip(
+                '+30m',
+                () => _setFollowupPreset(const Duration(minutes: 30)),
+              ),
+              _buildPresetChip(
+                '+1h',
+                () => _setFollowupPreset(const Duration(hours: 1)),
+              ),
+              _buildPresetChip(
+                '+2h',
+                () => _setFollowupPreset(const Duration(hours: 2)),
+              ),
+              _buildPresetChip(
+                'Tmrw 10 AM',
+                () => _setFollowupPresetAbsolute(
+                  hour: 10,
+                  minute: 0,
+                  tomorrow: true,
+                ),
+              ),
+              _buildPresetChip(
+                'Tmrw 3 PM',
+                () => _setFollowupPresetAbsolute(
+                  hour: 15,
+                  minute: 0,
+                  tomorrow: true,
+                ),
+              ),
             ],
           ),
         ],
@@ -2819,7 +3014,11 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
           // Header Row
           Row(
             children: [
-              const Icon(Icons.edit_note_rounded, size: 17, color: Color(0xFF64748B)),
+              const Icon(
+                Icons.edit_note_rounded,
+                size: 17,
+                color: Color(0xFF64748B),
+              ),
               const SizedBox(width: 6),
               const Text(
                 'Telecaller Remarks & Quick Notes',
@@ -2875,9 +3074,19 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
             decoration: InputDecoration(
               isDense: true,
               hintText: 'Enter feedback, loan interest, objections...',
-              hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-              prefixIcon: const Icon(Icons.notes_rounded, size: 17, color: Color(0xFF64748B)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              hintStyle: const TextStyle(
+                fontSize: 12,
+                color: Color(0xFF94A3B8),
+              ),
+              prefixIcon: const Icon(
+                Icons.notes_rounded,
+                size: 17,
+                color: Color(0xFF64748B),
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 9,
+              ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
                 borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
@@ -2888,7 +3097,10 @@ class CallingDeskScreenState extends State<CallingDeskScreen>
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: Color(0xFF2563EB), width: 1.5),
+                borderSide: const BorderSide(
+                  color: Color(0xFF2563EB),
+                  width: 1.5,
+                ),
               ),
               filled: true,
               fillColor: const Color(0xFFF8FAFC),

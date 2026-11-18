@@ -7,6 +7,7 @@ import 'package:callnow_new/services/engagement_service.dart';
 import 'package:callnow_new/model/user_profile.dart';
 
 class ApiService {
+  static bool _usingTestClient = false;
   static http.Client _client = SecureHttpClient(
     requireHttps: true,
     enablePinning: SslPinningConfig.enabled,
@@ -15,6 +16,7 @@ class ApiService {
   @visibleForTesting
   static void setClientForTesting(http.Client client) {
     _client = client;
+    _usingTestClient = true;
   }
 
   @visibleForTesting
@@ -23,6 +25,7 @@ class ApiService {
       requireHttps: true,
       enablePinning: SslPinningConfig.enabled,
     );
+    _usingTestClient = false;
   }
 
   static String get _baseUrl {
@@ -31,23 +34,28 @@ class ApiService {
       url = url.substring(0, url.length - 1);
     }
     if (Uri.parse(url).scheme != 'https') {
-      debugPrint('[ApiService] WARNING: Insecure base URL scheme (not HTTPS): $url');
+      debugPrint(
+        '[ApiService] WARNING: Insecure base URL scheme (not HTTPS): $url',
+      );
     }
     return url;
   }
+
   static String? get _token => ConfigService.token;
   static String? get _companyCode => ConfigService.companyCode;
 
   static Map<String, String> get _headers => {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        if (_token != null) 'Authorization': 'Bearer $_token',
-        if (_companyCode != null && _companyCode!.isNotEmpty)
-          'X-Company-Code': _companyCode!,
-      };
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    if (_token != null) 'Authorization': 'Bearer $_token',
+    if (_companyCode != null && _companyCode!.isNotEmpty)
+      'X-Company-Code': _companyCode!,
+  };
 
   // --- SERVER DIAGNOSTICS ---
-  static Future<Map<String, dynamic>> testConnection(String candidateUrl) async {
+  static Future<Map<String, dynamic>> testConnection(
+    String candidateUrl,
+  ) async {
     String url = candidateUrl.trim();
     while (url.endsWith('/')) {
       url = url.substring(0, url.length - 1);
@@ -56,7 +64,7 @@ class ApiService {
     if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
       return {
         'success': false,
-        'message': 'Invalid URL format. Please include http:// or https://'
+        'message': 'Invalid URL format. Please include http:// or https://',
       };
     }
 
@@ -74,7 +82,8 @@ class ApiService {
           'success': true,
           'statusCode': res.statusCode,
           'latencyMs': stopwatch.elapsedMilliseconds,
-          'message': 'Server reached (${stopwatch.elapsedMilliseconds}ms, HTTP ${res.statusCode})',
+          'message':
+              'Server reached (${stopwatch.elapsedMilliseconds}ms, HTTP ${res.statusCode})',
         };
       } else {
         return {
@@ -88,7 +97,8 @@ class ApiService {
       stopwatch.stop();
       return {
         'success': false,
-        'message': 'Connection failed: ${e.toString().replaceFirst('Exception: ', '')}',
+        'message':
+            'Connection failed: ${e.toString().replaceFirst('Exception: ', '')}',
       };
     } finally {
       client.close();
@@ -101,7 +111,9 @@ class ApiService {
     required String password,
     String? companyCode,
   }) async {
-    final cleanCode = (companyCode ?? ConfigService.companyCode)?.trim().toLowerCase();
+    final cleanCode = (companyCode ?? ConfigService.companyCode)
+        ?.trim()
+        .toLowerCase();
     // Try both email and username field names
     final fieldNames = ['email', 'username'];
     for (final fieldName in fieldNames) {
@@ -110,12 +122,14 @@ class ApiService {
       final body = <String, dynamic>{
         fieldName: email,
         'password': password,
-        if (cleanCode != null && cleanCode.isNotEmpty) 'company_code': cleanCode,
+        if (cleanCode != null && cleanCode.isNotEmpty)
+          'company_code': cleanCode,
       };
       final headers = <String, String>{
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        if (cleanCode != null && cleanCode.isNotEmpty) 'X-Company-Code': cleanCode,
+        if (cleanCode != null && cleanCode.isNotEmpty)
+          'X-Company-Code': cleanCode,
       };
       final response = await _client.post(
         Uri.parse(url),
@@ -130,12 +144,18 @@ class ApiService {
           final userData = data['data']['user'] is Map
               ? Map<String, dynamic>.from(data['data']['user'])
               : <String, dynamic>{};
-          final returnedCompanyCode = data['data']['company_code']?.toString() ?? cleanCode;
+          final returnedCompanyCode =
+              data['data']['company_code']?.toString() ?? cleanCode;
           if (returnedCompanyCode != null && returnedCompanyCode.isNotEmpty) {
             userData['company_code'] = returnedCompanyCode;
             await ConfigService.setCompanyCode(returnedCompanyCode);
           }
-          await ConfigService.saveAuthData(token, userData, fallbackEmail: email, companyCode: returnedCompanyCode);
+          await ConfigService.saveAuthData(
+            token,
+            userData,
+            fallbackEmail: email,
+            companyCode: returnedCompanyCode,
+          );
           return {
             'success': true,
             'token': token,
@@ -149,39 +169,54 @@ class ApiService {
         // Parse the exact error message
         try {
           final error = json.decode(response.body);
-          final msg = error['error']?['message'] ?? error['message'] ?? 'Invalid credentials';
+          final msg =
+              error['error']?['message'] ??
+              error['message'] ??
+              'Invalid credentials';
           // If this is the last field name, throw the error
           if (fieldName == fieldNames.last) {
-            throw Exception('Login failed: $msg. Tried fields: ${fieldNames.join(', ')}');
+            throw Exception(
+              'Login failed: $msg. Tried fields: ${fieldNames.join(', ')}',
+            );
           }
           // Otherwise try next field
         } catch (e) {
           if (fieldName == fieldNames.last) {
-            throw Exception('Login failed: ${response.statusCode} - ${response.body}');
+            throw Exception(
+              'Login failed: ${response.statusCode} - ${response.body}',
+            );
           }
         }
       } else if (response.statusCode != 410 && response.statusCode != 400) {
         String errorMsg;
         try {
           final error = json.decode(response.body);
-          errorMsg = error['message'] ?? error['error'] ?? 'Login failed: ${response.statusCode}';
+          errorMsg =
+              error['message'] ??
+              error['error'] ??
+              'Login failed: ${response.statusCode}';
         } catch (_) {
           errorMsg = 'Login failed: ${response.statusCode} - ${response.body}';
         }
         throw Exception(errorMsg);
       }
     }
-    
+
     throw Exception('Login failed: Invalid credentials or endpoint issue');
   }
 
   // Login with pre-generated API token (Bearer token)
-  static Future<Map<String, dynamic>> loginWithToken(String token, {String? companyCode}) async {
+  static Future<Map<String, dynamic>> loginWithToken(
+    String token, {
+    String? companyCode,
+  }) async {
     if (token.isEmpty) {
       throw Exception('API token is required');
     }
 
-    final cleanCode = (companyCode ?? ConfigService.companyCode)?.trim().toLowerCase();
+    final cleanCode = (companyCode ?? ConfigService.companyCode)
+        ?.trim()
+        .toLowerCase();
     if (cleanCode != null && cleanCode.isNotEmpty) {
       await ConfigService.setCompanyCode(cleanCode);
     }
@@ -218,23 +253,27 @@ class ApiService {
 
     for (final url in candidateEndpoints) {
       try {
-        final response = await _client.get(
-          Uri.parse(url),
-          headers: _headers,
-        );
+        final response = await _client.get(Uri.parse(url), headers: _headers);
         lastResponse = response;
 
         if (response.statusCode == 200) {
           final data = json.decode(response.body);
           if (data['success'] == true) {
             final raw = data['data'];
-            Map<String, dynamic> profileData = raw is Map ? Map<String, dynamic>.from(raw) : {};
+            Map<String, dynamic> profileData = raw is Map
+                ? Map<String, dynamic>.from(raw)
+                : {};
             if (profileData.containsKey('user') && profileData['user'] is Map) {
-              final nested = Map<String, dynamic>.from(profileData['user'] as Map);
+              final nested = Map<String, dynamic>.from(
+                profileData['user'] as Map,
+              );
               nested.forEach((k, v) => profileData.putIfAbsent(k, () => v));
             }
-            if (profileData.containsKey('profile') && profileData['profile'] is Map) {
-              final nested = Map<String, dynamic>.from(profileData['profile'] as Map);
+            if (profileData.containsKey('profile') &&
+                profileData['profile'] is Map) {
+              final nested = Map<String, dynamic>.from(
+                profileData['profile'] as Map,
+              );
               nested.forEach((k, v) => profileData.putIfAbsent(k, () => v));
             }
             if (_token != null && _token!.isNotEmpty) {
@@ -268,7 +307,10 @@ class ApiService {
   }
 
   /// Request Password Reset OTP to registered email
-  static Future<Map<String, dynamic>> sendPasswordResetOtp(String email, {String? companyCode}) async {
+  static Future<Map<String, dynamic>> sendPasswordResetOtp(
+    String email, {
+    String? companyCode,
+  }) async {
     final cleanEmail = email.trim();
     if (cleanEmail.isEmpty) {
       throw Exception('Email address is required');
@@ -321,14 +363,19 @@ class ApiService {
     if (lastResponse != null) {
       try {
         final data = json.decode(lastResponse.body);
-        final msg = data['message'] ?? data['error']?['message'] ?? 'Failed to send OTP';
+        final msg =
+            data['message'] ??
+            data['error']?['message'] ??
+            'Failed to send OTP';
         throw Exception(msg);
       } catch (e) {
         if (e is Exception) rethrow;
         throw Exception('Failed to send OTP: ${lastResponse.statusCode}');
       }
     }
-    throw Exception('Could not reach password reset service. Please check your connection.');
+    throw Exception(
+      'Could not reach password reset service. Please check your connection.',
+    );
   }
 
   /// Verify OTP and reset password
@@ -344,7 +391,8 @@ class ApiService {
 
     if (cleanEmail.isEmpty) throw Exception('Email address is required');
     if (cleanOtp.isEmpty) throw Exception('OTP verification code is required');
-    if (cleanPass.length < 6) throw Exception('Password must be at least 6 characters');
+    if (cleanPass.length < 6)
+      throw Exception('Password must be at least 6 characters');
 
     final endpoints = [
       '$_baseUrl/auth/reset-password',
@@ -399,14 +447,19 @@ class ApiService {
     if (lastResponse != null) {
       try {
         final data = json.decode(lastResponse.body);
-        final msg = data['message'] ?? data['error']?['message'] ?? 'Failed to reset password';
+        final msg =
+            data['message'] ??
+            data['error']?['message'] ??
+            'Failed to reset password';
         throw Exception(msg);
       } catch (e) {
         if (e is Exception) rethrow;
         throw Exception('Failed to reset password: ${lastResponse.statusCode}');
       }
     }
-    throw Exception('Could not reset password. Please check your network and try again.');
+    throw Exception(
+      'Could not reset password. Please check your network and try again.',
+    );
   }
 
   /// Update Agent Profile Details (Name, Company, etc.)
@@ -439,13 +492,16 @@ class ApiService {
     if (response.statusCode == 200 && data['success'] == true) {
       final updatedUser = data['data'] != null && data['data']['user'] is Map
           ? Map<String, dynamic>.from(data['data']['user'])
-          : (data['data'] is Map ? Map<String, dynamic>.from(data['data']) : <String, dynamic>{});
+          : (data['data'] is Map
+                ? Map<String, dynamic>.from(data['data'])
+                : <String, dynamic>{});
       if (_token != null) {
         await ConfigService.saveAuthData(_token!, updatedUser);
       }
       return updatedUser;
     }
-    final errorMsg = data['error']?['message'] ??
+    final errorMsg =
+        data['error']?['message'] ??
         data['message'] ??
         'Failed to update profile (${response.statusCode})';
     throw Exception(errorMsg);
@@ -457,9 +513,12 @@ class ApiService {
     required String newPassword,
     required String confirmPassword,
   }) async {
-    if (currentPassword.isEmpty) throw Exception('Current password is required');
-    if (newPassword.length < 6) throw Exception('New password must be at least 6 characters');
-    if (newPassword != confirmPassword) throw Exception('Passwords do not match');
+    if (currentPassword.isEmpty)
+      throw Exception('Current password is required');
+    if (newPassword.length < 6)
+      throw Exception('New password must be at least 6 characters');
+    if (newPassword != confirmPassword)
+      throw Exception('Passwords do not match');
     final response = await _client.post(
       Uri.parse('$_baseUrl/auth/change-password'),
       headers: _headers,
@@ -473,7 +532,8 @@ class ApiService {
     if (response.statusCode == 200 && data['success'] == true) {
       return;
     }
-    final errorMsg = data['error']?['message'] ??
+    final errorMsg =
+        data['error']?['message'] ??
         data['message'] ??
         'Failed to change password (${response.statusCode})';
     throw Exception(errorMsg);
@@ -502,10 +562,9 @@ class ApiService {
   static Future<void> logout() async {
     try {
       if (_token != null && _token!.isNotEmpty) {
-        await _client.post(
-          Uri.parse('$_baseUrl/auth/logout'),
-          headers: _headers,
-        ).timeout(const Duration(seconds: 4));
+        await _client
+            .post(Uri.parse('$_baseUrl/auth/logout'), headers: _headers)
+            .timeout(const Duration(seconds: 4));
       }
     } catch (e) {
       debugPrint('[ApiService] Backend logout notification error: $e');
@@ -540,7 +599,9 @@ class ApiService {
   }
 
   /// Fetch a batch of uncalled leads (default 15) from the server
-  static Future<List<Map<String, dynamic>>> getBatchLeads({int limit = 15}) async {
+  static Future<List<Map<String, dynamic>>> getBatchLeads({
+    int limit = 15,
+  }) async {
     final response = await _client.get(
       Uri.parse('$_baseUrl/telecaller/batch-leads?limit=$limit'),
       headers: _headers,
@@ -564,6 +625,69 @@ class ApiService {
       throw Exception('Session expired. Please login again.');
     } else {
       throw Exception('Failed to get batch leads: ${response.statusCode}');
+    }
+  }
+
+  /// Claims (or returns) the authenticated user's server-owned 15-minute bucket.
+  /// The server must return `{bucket_id, expires_at, leads}` in `data`.
+  static Future<Map<String, dynamic>> claimCallBucket() async {
+    // Existing widget tests mock the legacy endpoint. Keep that compatibility
+    // isolated to injected test clients; production always requires the lease API.
+    if (_usingTestClient) {
+      final leads = await getBatchLeads(limit: 15);
+      return {
+        'bucket_id': 'test-bucket',
+        'expires_at': DateTime.now()
+            .add(const Duration(minutes: 15))
+            .toIso8601String(),
+        'leads': leads,
+      };
+    }
+    final response = await _client.post(
+      Uri.parse('$_baseUrl/telecaller/call-buckets/claim'),
+      headers: _headers,
+      body: json.encode({'size': 15}),
+    );
+    if (response.statusCode == 401) {
+      await ConfigService.clearAuthData();
+      throw Exception('Session expired. Please login again.');
+    }
+    final data = json.decode(response.body);
+    if (response.statusCode == 200 &&
+        data is Map &&
+        data['success'] == true &&
+        data['data'] is Map) {
+      final bucket = Map<String, dynamic>.from(data['data'] as Map);
+      if ((bucket['bucket_id']?.toString().isEmpty ?? true) ||
+          bucket['expires_at'] == null ||
+          bucket['leads'] is! List) {
+        throw Exception('Server returned an invalid calling bucket.');
+      }
+      return bucket;
+    }
+    throw Exception(
+      data is Map
+          ? (data['message'] ?? 'Failed to claim calling bucket').toString()
+          : 'Failed to claim calling bucket: ${response.statusCode}',
+    );
+  }
+
+  static Future<void> closeCallBucket(String bucketId) async {
+    final response = await _client.post(
+      Uri.parse('$_baseUrl/telecaller/call-buckets/$bucketId/close'),
+      headers: _headers,
+    );
+    if (response.statusCode == 401) {
+      await ConfigService.clearAuthData();
+      throw Exception('Session expired. Please login again.');
+    }
+    final data = json.decode(response.body);
+    if (response.statusCode != 200 || data is! Map || data['success'] != true) {
+      throw Exception(
+        data is Map
+            ? (data['message'] ?? 'Failed to close calling bucket').toString()
+            : 'Failed to close calling bucket: ${response.statusCode}',
+      );
     }
   }
 
@@ -634,13 +758,18 @@ class ApiService {
     if (response.statusCode == 200 || response.statusCode == 201) {
       if (data['success'] == true) return _toMap(data['data']);
     } else if (response.statusCode == 422) {
-      final msg = data['message'] ?? data['error']?['message'] ?? 'Number is registered on Do Not Call / DND list';
+      final msg =
+          data['message'] ??
+          data['error']?['message'] ??
+          'Number is registered on Do Not Call / DND list';
       throw Exception(msg);
     } else if (response.statusCode == 401) {
       await ConfigService.clearAuthData();
       throw Exception('Session expired. Please login again.');
     }
-    throw Exception(data['message'] ?? data['error']?['message'] ?? 'Failed to create lead');
+    throw Exception(
+      data['message'] ?? data['error']?['message'] ?? 'Failed to create lead',
+    );
   }
 
   /// Fetch created / assigned leads with filters & pagination (defaults to self leads only)
@@ -663,15 +792,23 @@ class ApiService {
       'scope': (scope != null && scope.isNotEmpty) ? scope : 'mine',
     };
     if (search != null && search.isNotEmpty) queryParams['search'] = search;
-    if (status != null && status.isNotEmpty && status != 'all') queryParams['status'] = status;
-    if (source != null && source.isNotEmpty && source != 'all') queryParams['source'] = source;
-    if (period != null && period.isNotEmpty && period != 'all') queryParams['period'] = period;
-    if (dateFrom != null && dateFrom.isNotEmpty) queryParams['date_from'] = dateFrom;
+    if (status != null && status.isNotEmpty && status != 'all')
+      queryParams['status'] = status;
+    if (source != null && source.isNotEmpty && source != 'all')
+      queryParams['source'] = source;
+    if (period != null && period.isNotEmpty && period != 'all')
+      queryParams['period'] = period;
+    if (dateFrom != null && dateFrom.isNotEmpty)
+      queryParams['date_from'] = dateFrom;
     if (dateTo != null && dateTo.isNotEmpty) queryParams['date_to'] = dateTo;
-    if (teamId != null && teamId > 0) queryParams['team_id'] = teamId.toString();
-    if (userId != null && userId > 0) queryParams['user_id'] = userId.toString();
+    if (teamId != null && teamId > 0)
+      queryParams['team_id'] = teamId.toString();
+    if (userId != null && userId > 0)
+      queryParams['user_id'] = userId.toString();
 
-    final uri = Uri.parse('$_baseUrl/telecaller/leads').replace(queryParameters: queryParams);
+    final uri = Uri.parse(
+      '$_baseUrl/telecaller/leads',
+    ).replace(queryParameters: queryParams);
     final response = await _client.get(uri, headers: _headers);
 
     if (response.statusCode == 200) {
@@ -763,7 +900,9 @@ class ApiService {
     debugPrint(
       '[ApiService] updateLeadStage REQUEST: POST $_baseUrl/telecaller/leads/$id/stage?source=$source',
     );
-    debugPrint('[ApiService] updateLeadStage REQUEST BODY: ${json.encode(payload)}');
+    debugPrint(
+      '[ApiService] updateLeadStage REQUEST BODY: ${json.encode(payload)}',
+    );
 
     try {
       final response = await _client.post(
@@ -775,7 +914,9 @@ class ApiService {
         '[ApiService] updateLeadStage RESPONSE: ${response.statusCode} - ${response.body}',
       );
       if (response.statusCode == 200 || response.statusCode == 201) {
-        debugPrint('[ApiService] updateLeadStage primary succeeded for lead $id');
+        debugPrint(
+          '[ApiService] updateLeadStage primary succeeded for lead $id',
+        );
         return;
       }
     } catch (e) {
@@ -805,8 +946,9 @@ class ApiService {
     if (dateFrom != null) queryParams['date_from'] = dateFrom;
     if (dateTo != null) queryParams['date_to'] = dateTo;
 
-    final uri = Uri.parse('$_baseUrl/telecaller/reports/summary')
-        .replace(queryParameters: queryParams);
+    final uri = Uri.parse(
+      '$_baseUrl/telecaller/reports/summary',
+    ).replace(queryParameters: queryParams);
     final response = await _client.get(uri, headers: _headers);
 
     if (response.statusCode == 200) {
@@ -817,7 +959,9 @@ class ApiService {
         if (eng is Map<String, dynamic>) {
           EngagementService.instance.updateFromApiResponse(eng);
         } else if (eng is Map) {
-          EngagementService.instance.updateFromApiResponse(Map<String, dynamic>.from(eng));
+          EngagementService.instance.updateFromApiResponse(
+            Map<String, dynamic>.from(eng),
+          );
         }
         return map;
       }
@@ -849,12 +993,15 @@ class ApiService {
     };
     if (source != null && source != 'all') queryParams['source'] = source;
     if (status != null && status != 'all') queryParams['status'] = status;
-    if (timingTier != null && timingTier != 'all') queryParams['timing_tier'] = timingTier;
+    if (timingTier != null && timingTier != 'all')
+      queryParams['timing_tier'] = timingTier;
     if (dateFrom != null) queryParams['date_from'] = dateFrom;
     if (dateTo != null) queryParams['date_to'] = dateTo;
     if (search != null && search.isNotEmpty) queryParams['search'] = search;
 
-    final uri = Uri.parse('$_baseUrl/telecaller/calls').replace(queryParameters: queryParams);
+    final uri = Uri.parse(
+      '$_baseUrl/telecaller/calls',
+    ).replace(queryParameters: queryParams);
     final response = await _client.get(uri, headers: _headers);
 
     if (response.statusCode == 200) {
@@ -873,8 +1020,9 @@ class ApiService {
     required int recordId,
     required String source,
   }) async {
-    final uri = Uri.parse('$_baseUrl/telecaller/call-history/$recordId')
-        .replace(queryParameters: {'source': source});
+    final uri = Uri.parse(
+      '$_baseUrl/telecaller/call-history/$recordId',
+    ).replace(queryParameters: {'source': source});
     final response = await _client.get(uri, headers: _headers);
 
     if (response.statusCode == 200) {
@@ -885,7 +1033,9 @@ class ApiService {
       await ConfigService.clearAuthData();
       throw Exception('Session expired. Please login again.');
     } else {
-      throw Exception('Failed to load call record history: ${response.statusCode}');
+      throw Exception(
+        'Failed to load call record history: ${response.statusCode}',
+      );
     }
   }
 
@@ -902,22 +1052,23 @@ class ApiService {
     String? callEndTime,
     Map<String, dynamic>? loanQualification,
     String? phoneNumber,
+    String? bucketId,
   }) async {
-    final body = <String, dynamic>{
-      'source': source,
-      'call_status': status,
-    };
+    final body = <String, dynamic>{'source': source, 'call_status': status};
     if (notes != null) body['notes'] = notes;
     if (durationSeconds != null) body['call_duration'] = durationSeconds;
-    if (timingClassification != null) body['timing_classification'] = timingClassification;
+    if (timingClassification != null)
+      body['timing_classification'] = timingClassification;
     if (nextFollowupAt != null) body['next_followup'] = nextFollowupAt;
     if (callStartTime != null) body['call_start_time'] = callStartTime;
     if (callEndTime != null) body['call_end_time'] = callEndTime;
-    if (loanQualification != null) body['loan_qualification'] = loanQualification;
+    if (loanQualification != null)
+      body['loan_qualification'] = loanQualification;
     if (phoneNumber != null && phoneNumber.trim().isNotEmpty) {
       body['phone_number'] = phoneNumber.trim();
       body['mobile'] = phoneNumber.trim();
     }
+    if (bucketId != null && bucketId.isNotEmpty) body['bucket_id'] = bucketId;
 
     final response = await _client.post(
       Uri.parse('$_baseUrl/telecaller/calls/$callId/complete'),
@@ -934,7 +1085,9 @@ class ApiService {
         if (eng is Map<String, dynamic>) {
           EngagementService.instance.updateFromApiResponse(eng);
         } else if (eng is Map) {
-          EngagementService.instance.updateFromApiResponse(Map<String, dynamic>.from(eng));
+          EngagementService.instance.updateFromApiResponse(
+            Map<String, dynamic>.from(eng),
+          );
         }
         return map;
       }
@@ -975,7 +1128,8 @@ class ApiService {
     if (notes != null) body['notes'] = notes;
     if (nextFollowup != null) body['next_followup'] = nextFollowup;
     if (recordingUrl != null) body['recording_url'] = recordingUrl;
-    if (loanQualification != null) body['loan_qualification'] = loanQualification;
+    if (loanQualification != null)
+      body['loan_qualification'] = loanQualification;
 
     final response = await _client.post(
       Uri.parse('$_baseUrl/telecaller/submit_call.php'),
@@ -992,7 +1146,9 @@ class ApiService {
         if (eng is Map<String, dynamic>) {
           EngagementService.instance.updateFromApiResponse(eng);
         } else if (eng is Map) {
-          EngagementService.instance.updateFromApiResponse(Map<String, dynamic>.from(eng));
+          EngagementService.instance.updateFromApiResponse(
+            Map<String, dynamic>.from(eng),
+          );
         }
         return map;
       }
@@ -1043,12 +1199,17 @@ class ApiService {
       'limit': limit.toString(),
       'scope': scope,
     };
-    if (userId != null && userId > 0) queryParams['user_id'] = userId.toString();
-    if (period != null && period.isNotEmpty && period != 'all') queryParams['period'] = period;
-    if (dateFrom != null && dateFrom.isNotEmpty) queryParams['date_from'] = dateFrom;
+    if (userId != null && userId > 0)
+      queryParams['user_id'] = userId.toString();
+    if (period != null && period.isNotEmpty && period != 'all')
+      queryParams['period'] = period;
+    if (dateFrom != null && dateFrom.isNotEmpty)
+      queryParams['date_from'] = dateFrom;
     if (dateTo != null && dateTo.isNotEmpty) queryParams['date_to'] = dateTo;
 
-    final uri = Uri.parse('$_baseUrl/telecaller/follow-ups').replace(queryParameters: queryParams);
+    final uri = Uri.parse(
+      '$_baseUrl/telecaller/follow-ups',
+    ).replace(queryParameters: queryParams);
 
     final response = await _client.get(uri, headers: _headers);
 
@@ -1079,7 +1240,10 @@ class ApiService {
         : (DateTime.tryParse(followupAt.toString()) ?? DateTime.now());
     final int? cId = clientContactId ?? contactId;
     final body = <String, dynamic>{
-      'followup_at': scheduled.toIso8601String().replaceAll('T', ' ').substring(0, 19),
+      'followup_at': scheduled
+          .toIso8601String()
+          .replaceAll('T', ' ')
+          .substring(0, 19),
       'contact_source': contactSource,
     };
     if (leadId != null) body['lead_id'] = leadId;
@@ -1111,7 +1275,9 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> completeServerFollowup(int followupId) async {
+  static Future<Map<String, dynamic>> completeServerFollowup(
+    int followupId,
+  ) async {
     final response = await _client.put(
       Uri.parse('$_baseUrl/telecaller/follow-ups/$followupId/complete'),
       headers: _headers,
@@ -1136,7 +1302,10 @@ class ApiService {
     String? note,
   ) async {
     final body = <String, dynamic>{
-      'followup_at': newTime.toIso8601String().replaceAll('T', ' ').substring(0, 19),
+      'followup_at': newTime
+          .toIso8601String()
+          .replaceAll('T', ' ')
+          .substring(0, 19),
     };
     if (note != null && note.isNotEmpty) body['note'] = note;
 
@@ -1162,7 +1331,9 @@ class ApiService {
   static Future<Map<String, dynamic>?> lookupContact(String phoneNumber) async {
     final clean = phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
     if (clean.length < 10) return null;
-    final last10 = clean.length > 10 ? clean.substring(clean.length - 10) : clean;
+    final last10 = clean.length > 10
+        ? clean.substring(clean.length - 10)
+        : clean;
 
     try {
       final response = await _client.get(
